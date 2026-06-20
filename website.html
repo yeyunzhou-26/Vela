@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BaiLongma | 持续运行的 AI Agent</title>
+  <title>Vela | AI Operating Desk</title>
   <meta
     name="description"
-    content="BaiLongma 是一个持续运行的 AI Agent 实验框架，具备 Tick 驱动、任务持久化、记忆注入、工具调用与可视化监控能力。"
+    content="Vela 是一个 mission-first 的 AI Operating Desk，围绕 Mission Workspace、Voice、Memory、Guard 和 Review 组织 AI 工作。"
   >
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -183,138 +183,138 @@
     <div class="beam"></div>
     <div class="container">
       <header class="nav">
-        <a class="brand" href="#top" aria-label="BaiLongma">
+        <a class="brand" href="#top" aria-label="Vela">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-copy">
-            <span class="brand-name">BaiLongma</span>
-            <span class="brand-sub">Continuous Agent Framework</span>
+            <span class="brand-name">Vela</span>
+            <span class="brand-sub">AI Operating Desk</span>
           </span>
         </a>
         <nav class="nav-links">
           <a class="pill-link" href="#features">能力</a>
           <a class="pill-link" href="#architecture">架构</a>
           <a class="pill-link" href="#quickstart">开始使用</a>
-          <a class="pill-link" href="https://github.com/xiaoyuanda666-ship-it/BaiLongma" target="_blank" rel="noreferrer">GitHub</a>
+          <a class="pill-link" href="https://github.com/yeyunzhou-26/Vela" target="_blank" rel="noreferrer">GitHub</a>
         </nav>
       </header>
 
       <main id="top">
         <section class="hero">
           <div class="hero-main">
-            <div class="eyebrow">Tick-Driven • Memory-Injected • Tool-Acting</div>
-            <h1>不是一问一答，<br>而是持续运行的 AI Agent。</h1>
-            <p class="hero-lead">BaiLongma 是一个围绕“持续意识流”构建的 AI Agent 实验框架。它会在 <strong>TICK</strong> 驱动下继续运行，在有消息时优先响应，在空闲时继续基于任务、记忆与上下文推进下一步动作。</p>
+            <div class="eyebrow">Mission-First • Voice Layer • Guarded Autonomy</div>
+            <h1>不是聊天壳，<br>而是 AI 工作操作台。</h1>
+            <p class="hero-lead">Vela 把一次工作组织成可以规划、执行、复核和继续推进的 mission。中间是 <strong>Mission Workspace</strong>，右侧 Intelligence Spine 默认折叠，语音、记忆、工具、权限和评审都围绕同一个任务运转。</p>
             <div class="hero-actions">
-              <a class="button button-primary" href="https://github.com/xiaoyuanda666-ship-it/BaiLongma" target="_blank" rel="noreferrer">查看 GitHub</a>
-              <a class="button button-secondary" href="/brain-ui">打开 Brain UI</a>
+              <a class="button button-primary" href="https://github.com/yeyunzhou-26/Vela" target="_blank" rel="noreferrer">查看 GitHub</a>
+              <a class="button button-secondary" href="/vela.html">打开 Vela</a>
               <a class="button button-secondary" href="#quickstart">快速启动</a>
             </div>
             <div class="hero-grid">
               <div class="mini-stat">
-                <div class="mini-stat-label">运行方式</div>
-                <div class="mini-stat-value">Continuous Loop</div>
-                <div class="mini-stat-note">不是请求式聊天，而是一个持续运行的主循环。</div>
+                <div class="mini-stat-label">主工作区</div>
+                <div class="mini-stat-value">Mission Workspace</div>
+                <div class="mini-stat-note">目标、计划、证据、检查和下一步集中在一个任务表面。</div>
               </div>
               <div class="mini-stat">
-                <div class="mini-stat-label">核心能力</div>
-                <div class="mini-stat-value">Memory + Tools</div>
-                <div class="mini-stat-note">支持记忆注入、任务状态、工具执行与恢复。</div>
+                <div class="mini-stat-label">行动边界</div>
+                <div class="mini-stat-value">Guard + Review</div>
+                <div class="mini-stat-note">权限模式、风险提示、复核证据和可回放轨迹一起工作。</div>
               </div>
               <div class="mini-stat">
-                <div class="mini-stat-label">可视化</div>
-                <div class="mini-stat-value">Brain UI</div>
-                <div class="mini-stat-note">内置 HTTP API、SSE 事件流与监控界面。</div>
+                <div class="mini-stat-label">输入方式</div>
+                <div class="mini-stat-value">Vela Voice</div>
+                <div class="mini-stat-note">语音意图、打断、修正和状态回读成为工作入口。</div>
               </div>
             </div>
           </div>
           <aside class="hero-side">
             <div class="hero-card-top">
-              <div class="hero-card-title">Runtime Pulse</div>
-              <div class="hero-card-tag">Agent</div>
+              <div class="hero-card-title">Mission Pulse</div>
+              <div class="hero-card-tag">Vela</div>
             </div>
             <div class="flow">
-              <div class="flow-step"><span>01</span><strong>接收消息</strong><p>外部消息进入队列后，会打断当前思考并立刻切回响应路径。</p></div>
-              <div class="flow-step"><span>02</span><strong>记忆注入</strong><p>对话窗口、人物记忆、任务知识、行为约束会按需装配进系统提示。</p></div>
-              <div class="flow-step"><span>03</span><strong>工具执行</strong><p>支持发消息、读写文件、执行命令、抓网页、提醒调度等动作。</p></div>
-              <div class="flow-step"><span>04</span><strong>持续推进</strong><p>空闲时继续 TICK，自适应节奏，重启后还能恢复任务状态。</p></div>
+              <div class="flow-step"><span>01</span><strong>定义 Mission</strong><p>目标、上下文、约束、权限和验收标准先进入同一个工作空间。</p></div>
+              <div class="flow-step"><span>02</span><strong>装配上下文</strong><p>记忆、文件、工具状态和界面信号按需进入当前任务，不淹没主工作区。</p></div>
+              <div class="flow-step"><span>03</span><strong>受控行动</strong><p>Plan、Assist、Act、Auto 控制自动化边界，关键动作保留确认与证据。</p></div>
+              <div class="flow-step"><span>04</span><strong>复核继续</strong><p>评审、trace、截图和下一步让任务可以被继续推进，而不是停在一次回答。</p></div>
             </div>
           </aside>
         </section>
 
         <section class="section" id="features">
           <div class="section-head">
-            <div><h2>一个 Agent，不止会“回答”。</h2></div>
-            <p>BaiLongma 的重点不是把模型包成聊天框，而是把长期运行、工具行动、任务持久化和记忆结构真正组合起来。</p>
+            <div><h2>一个工作台，不止会“回答”。</h2></div>
+            <p>Vela 的重点不是把模型包成聊天框，而是把 mission、记忆、工具行动、权限边界和评审闭环放到一个可操作的桌面里。</p>
           </div>
           <div class="feature-grid">
             <article class="feature-card">
-              <div class="feature-kicker">Core Loop</div>
-              <h3>持续意识流</h3>
-              <p>项目以 TICK 机制驱动，不依赖单次请求存活。消息、空闲、任务、限流与提醒状态都会影响下一次调度。</p>
+              <div class="feature-kicker">Mission Workspace</div>
+              <h3>任务第一屏</h3>
+              <p>主区域服务当前 mission，承载目标、计划、当前步骤、证据、风险和下一步，不把用户推回杂乱面板。</p>
               <ul class="feature-list">
-                <li>消息到达立即打断当前处理</li>
-                <li>空闲时继续执行 L2 TICK</li>
-                <li>支持动态 tick interval</li>
+                <li>中心工作区保持唯一主表面</li>
+                <li>右侧 Intelligence Spine 默认折叠</li>
+                <li>阶段状态和证据同步呈现</li>
               </ul>
             </article>
             <article class="feature-card">
               <div class="feature-kicker">Memory System</div>
-              <h3>记忆写入与注入</h3>
-              <p>内置记忆识别器、记忆检索器和人物根节点记忆，让 Agent 能在后续轮次里继续“带着过去”工作。</p>
+              <h3>记忆证据链</h3>
+              <p>记忆召回不是黑箱提示词，而是可以展示来源、置信度、使用原因和对当前 mission 的影响。</p>
               <ul class="feature-list">
                 <li>SQLite + FTS5 持久化</li>
                 <li>人物记忆、任务知识、行为约束</li>
-                <li>支持主动 recall</li>
+                <li>支持 provenance 和 recall 评估</li>
               </ul>
             </article>
             <article class="feature-card">
               <div class="feature-kicker">Action Layer</div>
-              <h3>工具调用闭环</h3>
-              <p>模型不只是生成文本，还能真实地采取动作。工具调用结果会回流给模型，并写入行动日志。</p>
+              <h3>受控工具行动</h3>
+              <p>工具调用、权限模式和复核声明在同一套 mission runtime 中运行，关键动作有边界、有日志、有回放。</p>
               <ul class="feature-list">
                 <li><code>send_message</code> / <code>fetch_url</code></li>
                 <li><code>read_file</code> / <code>write_file</code></li>
-                <li><code>exec_command</code> / reminders</li>
+                <li><code>exec_command</code> / permission guard</li>
               </ul>
             </article>
             <article class="feature-card">
-              <div class="feature-kicker">Task State</div>
-              <h3>任务可恢复</h3>
-              <p>通过 <code>[SET_TASK]</code> 与 <code>[CLEAR_TASK]</code> 协议跟踪任务进度，重启后仍能恢复当前执行中的任务。</p>
+              <div class="feature-kicker">Voice Layer</div>
+              <h3>语音操作入口</h3>
+              <p>语音不只是输入文本，还要覆盖打断、修正、状态回读、权限确认和任务续跑。</p>
             </article>
             <article class="feature-card">
               <div class="feature-kicker">Observability</div>
-              <h3>可视化监控</h3>
-              <p>项目内置 HTTP API、SSE 事件流、Brain UI 与状态接口，方便观察 Agent 的思考、动作与记忆状态。</p>
+              <h3>轨迹与评审</h3>
+              <p>Golden trace、截图检查、产品契约和评审声明让 Vela 的每一步能被验证，而不是只看最终文本。</p>
             </article>
             <article class="feature-card">
-              <div class="feature-kicker">Provider Layer</div>
-              <h3>多模型与扩展能力</h3>
-              <p>支持 OpenAI、DeepSeek、MiniMax，并把语音、音乐、歌词等能力独立成 provider 层，便于继续扩展。</p>
+              <div class="feature-kicker">Compatibility</div>
+              <h3>保留旧能力</h3>
+              <p>兼容 Brain UI、本地 API、语音、工具市场和多模型 provider，Vela Shell 在已有能力之上继续演进。</p>
             </article>
           </div>
         </section>
 
         <section class="section" id="architecture">
           <div class="section-head">
-            <div><h2>围绕“持续运行”组织起来的 Agent 架构。</h2></div>
-            <p>这不是一个把 prompt 塞给模型的薄壳，而是一条清晰的运行链路：消息输入、记忆注入、上下文补采集、工具执行、识别写回、下一轮继续。</p>
+            <div><h2>围绕 mission 组织起来的工作架构。</h2></div>
+            <p>这不是一个把 prompt 塞给模型的薄壳，而是一条清晰的运行链路：任务定义、上下文装配、权限判断、工具执行、评审写回、下一步继续。</p>
           </div>
           <div class="architecture">
             <div class="panel">
               <div class="stack">
-                <div class="stack-row"><div class="stack-label">Input</div><div><strong>Queue + Interrupt</strong><p>消息进入队列后打断当前处理，保持“像即时通信一样”的响应体验。</p></div></div>
-                <div class="stack-row"><div class="stack-label">Context</div><div><strong>Injector + Gatherer</strong><p>对话窗口、人物记忆、任务知识与补充上下文一起决定当前轮次看到的世界。</p></div></div>
-                <div class="stack-row"><div class="stack-label">Action</div><div><strong>Tool-Calling Loop</strong><p>模型可以多轮调用工具，直到真正完成动作，而不是一次性吐出答案就结束。</p></div></div>
-                <div class="stack-row"><div class="stack-label">Memory</div><div><strong>Recognizer + SQLite</strong><p>把值得长期保留的事实、人物、对象与经验写回数据库，供后续继续使用。</p></div></div>
-                <div class="stack-row"><div class="stack-label">Observe</div><div><strong>API + SSE + Brain UI</strong><p>把 Agent 的内部状态暴露为可以看见、可以调试、可以继续扩展的界面与接口。</p></div></div>
+                <div class="stack-row"><div class="stack-label">Mission</div><div><strong>Goal + Constraints</strong><p>目标、验收标准、权限和上下文边界先进入 mission runtime。</p></div></div>
+                <div class="stack-row"><div class="stack-label">Workspace</div><div><strong>Focused Surface</strong><p>主工作区只服务当前任务，右侧智能脊柱默认收起，必要时展开查看证据。</p></div></div>
+                <div class="stack-row"><div class="stack-label">Action</div><div><strong>Guarded Tool Loop</strong><p>工具行动由权限模式和风险提示约束，结果回流到任务轨迹和评审区域。</p></div></div>
+                <div class="stack-row"><div class="stack-label">Memory</div><div><strong>Recall + Provenance</strong><p>可解释地召回、引用和写回长期记忆，供后续 mission 继续使用。</p></div></div>
+                <div class="stack-row"><div class="stack-label">Review</div><div><strong>Trace + Evidence</strong><p>把内部状态暴露为可以看见、可以调试、可以继续扩展的界面与接口。</p></div></div>
               </div>
             </div>
             <div class="timeline">
-              <div class="timeline-card"><div class="timeline-index">1</div><div><h3>主循环启动</h3><p>初始化数据库、恢复任务状态、启动 HTTP API 与 TUI，然后进入第一轮调度。</p></div></div>
-              <div class="timeline-card"><div class="timeline-index">2</div><div><h3>按需装配上下文</h3><p>先注入记忆，再根据当前任务判断上下文是否充分，不够就继续读文件或搜记忆。</p></div></div>
-              <div class="timeline-card"><div class="timeline-index">3</div><div><h3>模型驱动行动</h3><p>输出文本、触发工具、消费工具结果、追加行动日志，然后决定下一轮要不要继续。</p></div></div>
-              <div class="timeline-card"><div class="timeline-index">4</div><div><h3>记忆落库</h3><p>识别值得长期保留的知识与关系，去重后写入持久层，形成可继续积累的 Agent 历史。</p></div></div>
+              <div class="timeline-card"><div class="timeline-index">1</div><div><h3>Mission 启动</h3><p>建立目标、当前阶段、权限模式、上下文摘要和验收标准。</p></div></div>
+              <div class="timeline-card"><div class="timeline-index">2</div><div><h3>上下文装配</h3><p>按需引入记忆、工具结果、文件和屏幕状态，保持主工作区清晰。</p></div></div>
+              <div class="timeline-card"><div class="timeline-index">3</div><div><h3>受控执行</h3><p>模型可以多轮调用工具，但关键动作会经过 Guard、确认和 trace 记录。</p></div></div>
+              <div class="timeline-card"><div class="timeline-index">4</div><div><h3>复核续跑</h3><p>评审结论、证据和下一步写回任务，让工作可以继续，而不是停在一次响应。</p></div></div>
             </div>
           </div>
         </section>
@@ -322,24 +322,25 @@
         <section class="section" id="quickstart">
           <div class="section-head">
             <div><h2>几分钟内把它跑起来。</h2></div>
-            <p>BaiLongma 的定位是本地可运行、可观察、可继续改造的 Agent 实验框架。你可以先跑起来，再按自己的方向继续扩展它。</p>
+            <p>Vela 的定位是本地可运行、可观察、可继续改造的 AI Operating Desk。你可以先打开 Vela Shell，再按自己的工作流继续扩展它。</p>
           </div>
           <div class="quickstart">
             <div class="code-block">
               <div class="code-head"><h3>Quick Start</h3><span>Terminal</span></div>
-              <pre><code>git clone https://github.com/xiaoyuanda666-ship-it/BaiLongma.git
-cd BaiLongma
+              <pre><code>git clone git@github.com:yeyunzhou-26/Vela.git
+cd Vela
 npm install
 
 # .env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your_key_here
 
-npm start</code></pre>
+npm run dev:vela</code></pre>
             </div>
             <div class="code-block">
               <div class="code-head"><h3>Open Interfaces</h3><span>Runtime</span></div>
-              <pre><code>http://127.0.0.1:3721/site
+              <pre><code>http://127.0.0.1:4173/vela.html
+http://127.0.0.1:3721/vela.html
 http://127.0.0.1:3721/brain-ui
 http://127.0.0.1:3721/events
 http://127.0.0.1:3721/status
@@ -347,20 +348,20 @@ http://127.0.0.1:3721/memories?limit=20</code></pre>
             </div>
           </div>
           <div class="quote" style="margin-top: 20px;">
-            <p>如果你想做的不是一个“会聊天的壳”，而是一个能持续存在、能记住、能行动、能继续推进任务的 Agent，BaiLongma 是一个很好的起点。</p>
-            <small>Built Around Continuous Agent Runtime</small>
+            <p>如果你想做的不是一个“会聊天的壳”，而是一个能承载任务、记住证据、受控行动、持续复核的 AI 工作台，Vela 是一个很好的起点。</p>
+            <small>Built Around Mission-First AI Work</small>
           </div>
         </section>
 
         <section class="section cta">
           <div class="cta-shell">
             <div>
-              <h2>把你的 Agent 从“回答器”，推进成“持续系统”。</h2>
-              <p>现在就去看源码、跑起来，或者直接打开 Brain UI 感受它的运行状态。这个项目最有趣的地方，不是它已经完成了什么，而是它已经具备了继续长成一个更完整 Agent 的骨架。</p>
+              <h2>把 AI 从“回答器”，推进成“工作操作台”。</h2>
+              <p>现在就去看源码、跑起来，或者直接打开 Vela Shell 感受 Mission Workspace 的运行状态。最重要的不是多一个面板，而是让 AI 工作有目标、有边界、有证据、有下一步。</p>
             </div>
             <div class="cta-links">
-              <a class="button button-primary" href="https://github.com/xiaoyuanda666-ship-it/BaiLongma" target="_blank" rel="noreferrer">Star on GitHub</a>
-              <a class="button button-secondary" href="/brain-ui">Open Brain UI</a>
+              <a class="button button-primary" href="https://github.com/yeyunzhou-26/Vela" target="_blank" rel="noreferrer">Star on GitHub</a>
+              <a class="button button-secondary" href="/vela.html">Open Vela</a>
               <a class="button button-secondary" href="/status">View Status API</a>
             </div>
           </div>
@@ -368,7 +369,7 @@ http://127.0.0.1:3721/memories?limit=20</code></pre>
       </main>
 
       <footer class="footer">
-        <div>BaiLongma · 持续运行的 AI Agent 实验框架</div>
+        <div>Vela · AI Operating Desk</div>
         <div>Official site route: <code>/site</code></div>
       </footer>
     </div>

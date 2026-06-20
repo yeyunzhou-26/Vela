@@ -1,12 +1,12 @@
 {
-  "name": "bailongma",
-  "productName": "Bailongma",
+  "name": "vela",
+  "productName": "Vela",
   "version": "2.1.399",
-  "description": "A continuously running digital consciousness framework",
+  "description": "Mission-first AI Operating Desk with voice, memory, agents, permissions, and review",
   "type": "module",
   "main": "electron/main.cjs",
   "author": {
-    "name": "xiaoyuanda666-ship-it"
+    "name": "yeyunzhou-26"
   },
   "scripts": {
     "start": "electron .",
@@ -59,8 +59,8 @@
     "playwright": "^1.59.1"
   },
   "build": {
-    "appId": "com.xiaoyuanda.bailongma",
-    "productName": "Bailongma",
+    "appId": "com.yeyunzhou.vela",
+    "productName": "Vela",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "npmRebuild": false,
     "asar": true,
@@ -123,13 +123,13 @@
       "uninstallerSidebar": "build/uninstallerSidebar.bmp",
       "createDesktopShortcut": false,
       "createStartMenuShortcut": false,
-      "shortcutName": "Bailongma"
+      "shortcutName": "Vela"
     },
     "publish": [
       {
         "provider": "github",
-        "owner": "xiaoyuanda666-ship-it",
-        "repo": "BaiLongma",
+        "owner": "yeyunzhou-26",
+        "repo": "Vela",
         "releaseType": "release"
       }
     ]
