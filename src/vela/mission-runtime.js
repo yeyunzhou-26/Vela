@@ -34,6 +34,7 @@ const SEED_MISSION_TITLE = '开始一项 Vela 任务'
 const SEED_MISSION_GOAL = '告诉 Vela 你想完成什么，它会把任务整理成目标、计划、证据、权限和复核。'
 const SEED_MISSION_NEXT_STEP = '在下方输入“开始 + 你的任务”，或者直接说出想完成的事。'
 const STARTED_MISSION_NEXT_STEP = '检查任务计划，确认后输入“继续”。'
+const MISSION_BRIEF_TITLE = '任务简报'
 const SEED_PLAN = [
   { id: 'describe-mission', label: '说出你要完成的任务', status: 'Active' },
   { id: 'review-plan', label: '确认 Vela 生成的计划', status: 'Next' },
@@ -523,6 +524,26 @@ function makeInputRecord(input = {}) {
   return record
 }
 
+function briefPlanStepId(plan = []) {
+  return normalizeArray(plan).find(step => step?.status === 'Active')?.id
+    || normalizeArray(plan).find(step => step?.id)?.id
+    || 'draft-plan'
+}
+
+function makeMissionBriefArtifact({ missionId, title, planStepId, createdAt } = {}) {
+  const safeMissionId = encodeURIComponent(asText(missionId, makeId('mission')))
+  const missionTitle = asText(title, 'Untitled mission')
+  return {
+    id: `${asText(missionId, safeMissionId)}-brief`,
+    title: MISSION_BRIEF_TITLE,
+    kind: 'brief',
+    uri: `vela://missions/${safeMissionId}/brief`,
+    summary: `目标：${missionTitle}。Vela 已建立任务计划、可复核产物和下一步入口；确认计划后输入“继续”。`,
+    planStepId: asText(planStepId, 'draft-plan'),
+    createdAt: asText(createdAt, new Date().toISOString()),
+  }
+}
+
 function normalizeScreenContext(value = {}) {
   if (!value || typeof value !== 'object') return {}
   const context = {
@@ -754,6 +775,39 @@ export function startMission(input = {}) {
   const now = new Date().toISOString()
   const title = asText(input.title, asText(input.goal, 'Untitled mission'))
   const missionId = input.id || `mission-${Date.now()}`
+  const plan = input.plan?.length ? input.plan : STARTED_PLAN.map(step => ({ ...step }))
+  const initialArtifacts = normalizeArray(input.artifacts)
+  const shouldCreateBrief = initialArtifacts.length === 0
+  const missionBrief = shouldCreateBrief
+    ? makeMissionBriefArtifact({
+        missionId,
+        title,
+        planStepId: briefPlanStepId(plan),
+        createdAt: now,
+      })
+    : null
+  const trace = [
+    {
+      missionId,
+      type: 'mission.started',
+      title: 'Mission started',
+      detail: title,
+      result: input.nextStep || STARTED_MISSION_NEXT_STEP,
+      createdAt: now,
+    },
+  ]
+  if (missionBrief) {
+    trace.push({
+      missionId,
+      type: 'mission.brief.created',
+      title: '任务简报已创建',
+      detail: missionBrief.summary,
+      planStepId: missionBrief.planStepId,
+      artifactId: missionBrief.id,
+      result: missionBrief.uri,
+      createdAt: now,
+    })
+  }
   const mission = normalizeMission({
     id: missionId,
     title,
@@ -763,9 +817,9 @@ export function startMission(input = {}) {
     modelStatus: input.modelStatus || 'Local runtime',
     activeSurface: input.activeSurface || 'Mission Plan',
     nextStep: input.nextStep || STARTED_MISSION_NEXT_STEP,
-    plan: input.plan?.length ? input.plan : STARTED_PLAN.map(step => ({ ...step })),
+    plan,
     inputs: input.inputs || [],
-    artifacts: input.artifacts || [],
+    artifacts: missionBrief ? [missionBrief] : initialArtifacts,
     agentActions: input.agentActions || [],
     toolCalls: input.toolCalls || [],
     permissions: input.permissions || [],
@@ -774,16 +828,7 @@ export function startMission(input = {}) {
     reviewChecks: input.reviewChecks || [],
     reviewResult: input.reviewResult ?? null,
     recoveryActions: input.recoveryActions || [],
-    trace: [
-      {
-        missionId,
-        type: 'mission.started',
-        title: 'Mission started',
-        detail: title,
-        result: input.nextStep || STARTED_MISSION_NEXT_STEP,
-        createdAt: now,
-      },
-    ],
+    trace,
     createdAt: now,
     updatedAt: now,
   })

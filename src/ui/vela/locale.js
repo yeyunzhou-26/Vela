@@ -167,6 +167,7 @@ const ZH = {
   'No summary': '没有摘要',
   URI: 'URI',
   note: '说明',
+  brief: '简报',
   preview: '预览',
   report: '报告',
   file: '文件',

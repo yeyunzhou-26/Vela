@@ -351,6 +351,10 @@ try {
   })
   assert(commandMission.title === 'Command Pipeline Mission', 'plain command starts a mission')
   assert(commandMission.inputs.at(-1).source === 'test-command', 'command mission captures typed input')
+  assert(commandMission.artifacts.some(item => item.title === '任务简报'), 'plain command mission creates a task brief artifact')
+  assert(commandMission.artifacts.at(-1).summary.includes('Command Pipeline Mission'), 'task brief summarizes the command mission goal')
+  assert(commandMission.artifacts.at(-1).planStepId === 'draft-plan', 'task brief links to the active planning step')
+  assert(commandMission.trace.some(item => item.type === 'mission.brief.created'), 'task brief creation is auditable in trace')
   assert(commandMission.trace.at(-1).type === 'command.started_mission', 'command mission records command trace')
 
   const commandRunning = runtime.applyCurrentMissionCommand({ text: 'continue', source: 'test-command' })
@@ -375,6 +379,7 @@ try {
 
   const chineseCommandMission = runtime.applyCurrentMissionCommand({ text: '开始 中文命令任务', source: 'test-command' })
   assert(chineseCommandMission.title === '中文命令任务', 'Chinese start command creates a named mission')
+  assert(chineseCommandMission.artifacts.at(-1).summary.includes('中文命令任务'), 'Chinese start command creates a localized task brief')
   const chineseCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(chineseCommandRunning.state === 'Running', 'Chinese continue command moves Planned -> Running')
   const chineseCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
@@ -394,6 +399,7 @@ try {
   })
   assert(voiceMission.title === 'Voice Pipeline Mission', 'voice intent starts a mission through command pipeline')
   assert(voiceMission.inputs.at(-1).source === 'voice', 'voice intent captures input source')
+  assert(voiceMission.artifacts.some(item => item.title === '任务简报'), 'voice-started mission creates a task brief artifact')
   assert(voiceMission.trace.at(-1).type === 'voice.intent.routed', 'voice intent records routing trace')
 
   const voiceRunning = runtime.applyCurrentMissionVoiceIntent({

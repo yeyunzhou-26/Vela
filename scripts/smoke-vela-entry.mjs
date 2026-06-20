@@ -12,6 +12,7 @@ const screenshotRoot = path.join(root, 'output', 'playwright', 'vela')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'blm-vela-entry-'))
 process.env.BAILONGMA_USER_DIR = tmp
 process.env.BAILONGMA_RESOURCES_DIR = root
+const RUNTIME_SMOKE_MISSION_TITLE = '运行时烟测任务'
 
 fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({
   schemaVersion: 1,
@@ -51,7 +52,7 @@ try {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      title: 'Smoke Runtime Mission',
+      title: RUNTIME_SMOKE_MISSION_TITLE,
       goal: 'Verify Vela mission persistence reaches the first screen.',
       nextStep: 'Resume this mission from persisted runtime state.',
       plan: [
@@ -60,7 +61,7 @@ try {
       ],
     }),
   }).then(res => res.json())
-  if (!created?.ok || created?.mission?.title !== 'Smoke Runtime Mission') {
+  if (!created?.ok || created?.mission?.title !== RUNTIME_SMOKE_MISSION_TITLE) {
     throw new Error('mission creation API failed')
   }
 
@@ -484,7 +485,7 @@ try {
 
   await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('.vela-shell', { timeout: 5000 })
-  await page.waitForFunction(expected => document.querySelector('.mission-workspace h1')?.textContent?.includes(expected), zh('Smoke Runtime Mission'))
+  await page.waitForFunction(expected => document.querySelector('.mission-workspace h1')?.textContent?.includes(expected), RUNTIME_SMOKE_MISSION_TITLE)
   const rootSnapshot = await page.evaluate(() => ({
     title: document.title,
     collapsed: document.querySelector('.intelligence-spine')?.dataset.collapsed,
@@ -493,7 +494,7 @@ try {
   }))
   if (!rootSnapshot.title.includes('Vela')) throw new Error('root entry did not serve Vela title')
   if (rootSnapshot.collapsed !== 'true') throw new Error('root entry did not keep Intelligence Spine collapsed')
-  if (!rootSnapshot.mission.includes(zh('Smoke Runtime Mission'))) throw new Error('root entry did not show persisted mission')
+  if (!rootSnapshot.mission.includes(RUNTIME_SMOKE_MISSION_TITLE)) throw new Error('root entry did not show persisted mission')
   if (!rootSnapshot.nextStep.includes(zh('Resume this mission from persisted runtime state.'))) throw new Error('root entry did not show persisted next step')
   await assertFocusedWorkbenchScreenshot(
     page,
@@ -757,8 +758,8 @@ try {
   if (switcherSnapshot.collapsed !== 'true') throw new Error('mission switcher opened with expanded spine')
   if (switcherSnapshot.count < 2) throw new Error('mission switcher did not list persisted missions')
   if (!switcherSnapshot.active.includes('UI Created Mission')) throw new Error('mission switcher did not mark UI-created mission active')
-  await page.getByRole('button', { name: new RegExp(zh('Smoke Runtime Mission')) }).click()
-  await page.waitForFunction(expected => document.querySelector('.mission-workspace h1')?.textContent?.includes(expected), zh('Smoke Runtime Mission'))
+  await page.getByRole('button', { name: new RegExp(RUNTIME_SMOKE_MISSION_TITLE) }).click()
+  await page.waitForFunction(expected => document.querySelector('.mission-workspace h1')?.textContent?.includes(expected), RUNTIME_SMOKE_MISSION_TITLE)
 
   const legacyRoot = await fetch(`${base}/?shell=brain`).then(res => res.text())
   if (!legacyRoot.includes('Longma') || !legacyRoot.includes('/src/ui/brain-ui/app.js')) {
