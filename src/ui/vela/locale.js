@@ -74,6 +74,7 @@ const ZH = {
   allowed: '已允许',
   approval_required: '需要批准',
   review_required: '需要审查',
+  ready: '就绪',
   passed: '已通过',
   failed: '失败',
   blocked: '已阻塞',
@@ -83,6 +84,7 @@ const ZH = {
   Next: '下一步',
 
   'Build Vela Shell': '构建 Vela Shell',
+  'Vela ready': 'Vela 已就绪',
   'Create the first mission-first Vela workbench while keeping legacy Brain UI available.': '创建第一个以任务为中心的 Vela 工作台，同时保留旧版 Brain UI。',
   'Mission Plan': '任务计划',
   'Verify the shell opens with the Intelligence Spine collapsed by default.': '验证 Shell 打开时右侧 Intelligence Spine 默认折叠。',

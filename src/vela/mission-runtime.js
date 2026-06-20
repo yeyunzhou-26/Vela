@@ -30,6 +30,30 @@ const VOICE_LATENCY_TARGETS_MS = {
   finalAsrToFirstToken: 1500,
   responseSegmentToFirstAudio: 800,
 }
+const SEED_MISSION_TITLE = '开始一项 Vela 任务'
+const SEED_MISSION_GOAL = '告诉 Vela 你想完成什么，它会把任务整理成目标、计划、证据、权限和复核。'
+const SEED_MISSION_NEXT_STEP = '在下方输入“开始 + 你的任务”，或者直接说出想完成的事。'
+const STARTED_MISSION_NEXT_STEP = '检查任务计划，确认后输入“继续”。'
+const SEED_PLAN = [
+  { id: 'describe-mission', label: '说出你要完成的任务', status: 'Active' },
+  { id: 'review-plan', label: '确认 Vela 生成的计划', status: 'Next' },
+  { id: 'execute-review', label: '执行、产出并复核', status: 'Next' },
+]
+const STARTED_PLAN = [
+  { id: 'clarify-goal', label: '确认任务目标', status: 'Done' },
+  { id: 'draft-plan', label: '整理执行计划', status: 'Active' },
+  { id: 'execute-review', label: '产出结果并复核', status: 'Next' },
+]
+const LEGACY_DEFAULT_PLAN_LABELS = new Map([
+  ['clarify-goal|Clarify mission goal', '确认任务目标'],
+  ['draft-plan|Draft mission plan', '整理执行计划'],
+  ['execute-review|Execute, verify, and review', '产出结果并复核'],
+])
+const LEGACY_DEFAULT_NEXT_STEPS = new Map([
+  ['Review the generated plan and continue.', STARTED_MISSION_NEXT_STEP],
+  ['Verify the shell opens with the Intelligence Spine collapsed by default.', SEED_MISSION_NEXT_STEP],
+  ['Smoke spine data is loaded from the runtime.', SEED_MISSION_NEXT_STEP],
+])
 
 const COMMAND_CONTINUE_RE = /^(?:(?:continue|resume|run|start running)\b|(?:继续|恢复|运行)(?:\s|$))/i
 const COMMAND_COMPLETE_RE = /^(?:(?:complete|finish|done|mark complete)\b|(?:完成|结束)(?:\s|$))/i
@@ -71,18 +95,14 @@ class MissionRuntimeError extends Error {
 export function createSeedMission(now = new Date().toISOString()) {
   return {
     id: 'mission-vela-shell',
-    title: 'Build Vela Shell',
-    goal: 'Create the first mission-first Vela workbench while keeping legacy Brain UI available.',
+    title: SEED_MISSION_TITLE,
+    goal: SEED_MISSION_GOAL,
     state: 'Planned',
     permissionMode: 'Assist',
     modelStatus: 'Local runtime',
     activeSurface: 'Mission Plan',
-    nextStep: 'Verify the shell opens with the Intelligence Spine collapsed by default.',
-    plan: [
-      { id: 'stabilize-runtime', label: 'Stabilize runtime base', status: 'Done' },
-      { id: 'open-workbench', label: 'Open focused workbench', status: 'Active' },
-      { id: 'connect-runtime', label: 'Connect mission runtime', status: 'Next' },
-    ],
+    nextStep: SEED_MISSION_NEXT_STEP,
+    plan: SEED_PLAN.map(step => ({ ...step })),
     inputs: [],
     artifacts: [],
     agentActions: [],
@@ -98,8 +118,8 @@ export function createSeedMission(now = new Date().toISOString()) {
         id: 'trace-seed-mission',
         missionId: 'mission-vela-shell',
         type: 'mission.seed',
-        title: 'Seed mission ready',
-        detail: 'Vela has a mission-first shell available before user-created missions exist.',
+        title: 'Vela ready',
+        detail: SEED_MISSION_GOAL,
         result: 'ready',
         createdAt: now,
       },
@@ -280,9 +300,20 @@ function normalizeArray(value) {
 function normalizePlan(plan = []) {
   return normalizeArray(plan).map((step, index) => ({
     id: asText(step?.id, `step-${index + 1}`),
-    label: asText(step?.label || step?.title, `Step ${index + 1}`),
+    label: normalizePlanLabel(step, index),
     status: normalizePlanStepStatus(step?.status, index === 0 ? 'Active' : 'Next'),
   }))
+}
+
+function normalizePlanLabel(step = {}, index = 0) {
+  const id = asText(step?.id, `step-${index + 1}`)
+  const label = asText(step?.label || step?.title, `Step ${index + 1}`)
+  return LEGACY_DEFAULT_PLAN_LABELS.get(`${id}|${label}`) || label
+}
+
+function normalizeNextStep(value, fallback = '规划下一步。') {
+  const nextStep = asText(value, fallback)
+  return LEGACY_DEFAULT_NEXT_STEPS.get(nextStep) || nextStep
 }
 
 function normalizePlanStepStatus(value, fallback = 'Next') {
@@ -621,7 +652,7 @@ export function normalizeMission(value = {}) {
     permissionMode: normalizePermissionMode(value.permissionMode, 'Assist'),
     modelStatus: asText(value.modelStatus, 'Local runtime'),
     activeSurface: asText(value.activeSurface, 'Mission Plan'),
-    nextStep: asText(value.nextStep, 'Plan the next mission step.'),
+    nextStep: normalizeNextStep(value.nextStep, '规划下一步。'),
     plan: normalizePlan(value.plan),
     inputs: normalizeArray(value.inputs),
     artifacts: normalizeArtifacts(value.artifacts),
@@ -731,12 +762,8 @@ export function startMission(input = {}) {
     permissionMode: input.permissionMode || 'Assist',
     modelStatus: input.modelStatus || 'Local runtime',
     activeSurface: input.activeSurface || 'Mission Plan',
-    nextStep: input.nextStep || 'Review the generated plan and continue.',
-    plan: input.plan?.length ? input.plan : [
-      { id: 'clarify-goal', label: 'Clarify mission goal', status: 'Done' },
-      { id: 'draft-plan', label: 'Draft mission plan', status: 'Active' },
-      { id: 'execute-review', label: 'Execute, verify, and review', status: 'Next' },
-    ],
+    nextStep: input.nextStep || STARTED_MISSION_NEXT_STEP,
+    plan: input.plan?.length ? input.plan : STARTED_PLAN.map(step => ({ ...step })),
     inputs: input.inputs || [],
     artifacts: input.artifacts || [],
     agentActions: input.agentActions || [],
@@ -753,7 +780,7 @@ export function startMission(input = {}) {
         type: 'mission.started',
         title: 'Mission started',
         detail: title,
-        result: input.nextStep || 'Review the generated plan and continue.',
+        result: input.nextStep || STARTED_MISSION_NEXT_STEP,
         createdAt: now,
       },
     ],
@@ -1276,7 +1303,7 @@ export function applyCurrentMissionCommand(input = {}) {
     const mission = startMission({
       title: missionText,
       goal: missionText,
-      nextStep: 'Review the generated plan and continue.',
+      nextStep: STARTED_MISSION_NEXT_STEP,
       inputs: [record],
       createdAt: now,
       updatedAt: now,

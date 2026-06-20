@@ -31,6 +31,7 @@ const slices = [
     name: 'Vela Shell And Chinese UI',
     files: [
       'vela.html',
+      'src/ui/vela/adapters/mission-api.js',
       'src/ui/vela/app-shell.js',
       'src/ui/vela/command-bar.js',
       'src/ui/vela/intelligence-spine.js',
@@ -48,6 +49,7 @@ const slices = [
     name: 'Screenshot And Entry Regression',
     files: [
       'scripts/vela-visual-assertions.mjs',
+      'scripts/serve-vela-preview.mjs',
       'scripts/smoke-vela-shell.mjs',
       'scripts/smoke-vela-entry.mjs',
     ],

@@ -11,17 +11,17 @@ export const voiceStates = [
 
 export const seedMission = {
   id: 'mission-vela-shell',
-  title: 'Build Vela Shell',
-  goal: 'Create the first mission-first Vela workbench while keeping legacy Brain UI available.',
+  title: '开始一项 Vela 任务',
+  goal: '告诉 Vela 你想完成什么，它会把任务整理成目标、计划、证据、权限和复核。',
   state: 'Planned',
   permissionMode: 'Assist',
   modelStatus: 'Local runtime',
   activeSurface: 'Mission Plan',
-  nextStep: 'Verify the shell opens with the Intelligence Spine collapsed by default.',
+  nextStep: '在下方输入“开始 + 你的任务”，或者直接说出想完成的事。',
   plan: [
-    { label: 'Stabilize runtime base', status: 'Done' },
-    { label: 'Open focused workbench', status: 'Active' },
-    { label: 'Connect mission runtime', status: 'Next' },
+    { id: 'describe-mission', label: '说出你要完成的任务', status: 'Active' },
+    { id: 'review-plan', label: '确认 Vela 生成的计划', status: 'Next' },
+    { id: 'execute-review', label: '执行、产出并复核', status: 'Next' },
   ],
 }
 

@@ -53,7 +53,7 @@ export async function createMissionFromText(text) {
     body: JSON.stringify({
       title,
       goal: title,
-      nextStep: 'Review the generated plan and continue.',
+      nextStep: '检查任务计划，确认后输入“继续”。',
     }),
   })
   const payload = await readMissionResponse(response, 'Unable to create mission')

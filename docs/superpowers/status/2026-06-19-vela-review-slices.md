@@ -1,7 +1,7 @@
 # Vela Review Slices
 
 Date: 2026-06-19
-Branch: `feat/vela-ai-operating-desk`
+Branch: `main`
 
 This file proposes review and commit slices for the current Vela Phase 5 worktree. It is a preparation aid only; no files have been staged or committed by this document.
 
@@ -36,6 +36,7 @@ Purpose: land the Focused Workbench shell and Chinese-first visible UI.
 Files:
 
 - `vela.html`
+- `src/ui/vela/adapters/mission-api.js`
 - `src/ui/vela/app-shell.js`
 - `src/ui/vela/command-bar.js`
 - `src/ui/vela/intelligence-spine.js`
@@ -70,6 +71,7 @@ Purpose: land visual and entry smoke coverage after the UI exists.
 Files:
 
 - `scripts/vela-visual-assertions.mjs`
+- `scripts/serve-vela-preview.mjs`
 - `scripts/smoke-vela-shell.mjs`
 - `scripts/smoke-vela-entry.mjs`
 

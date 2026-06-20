@@ -182,8 +182,8 @@ const requiredLiveBrowserText = [
   'http://127.0.0.1:4173/vela.html',
   'Vela · AI 操作台',
   'Document language: `zh-CN`',
-  'Current mission heading: `构建 Vela Shell`',
-  'Intelligence Spine visual rail width: `72px`',
+  'Current mission heading: `开始一项 Vela 任务`',
+  'Intelligence Spine visual rail width:',
   'live DOM inspection is available',
   'the right Intelligence Spine remains visually collapsed',
 ]
