@@ -805,6 +805,78 @@ function makeAssistantAgentAction(text, createdAt = new Date().toISOString()) {
   }, { createdAt })
 }
 
+function isExternalMessageMission(mission = {}) {
+  return isExternalMessageIntent(mission.title)
+    || isExternalMessageIntent(mission.goal)
+    || normalizeArray(mission.inputs).some(input => isExternalMessageIntent(input?.text))
+    || normalizeArray(mission.plan).some(step => ['inspect-context', 'draft-reply', 'confirm-send'].includes(asText(step?.id)))
+}
+
+function draftExternalMessageText(mission = {}) {
+  const sourceText = [
+    mission.title,
+    mission.goal,
+    ...normalizeArray(mission.inputs).map(input => input?.text),
+  ].map(value => asText(value)).join(' ')
+  if (/(老婆|妻子|太太|媳妇)/.test(sourceText)) return '收到，我晚点跟你说。'
+  if (/(老公|先生)/.test(sourceText)) return '收到，我晚点跟你说。'
+  return '收到，我看到了，稍后回复你。'
+}
+
+function externalMessageDraftSummary(mission = {}) {
+  return `我准备这样回：「${draftExternalMessageText(mission)}」`
+}
+
+function advanceExternalMessagePlanToConfirm(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (step.id === 'understand-request' || step.id === 'inspect-context' || step.id === 'draft-reply') {
+      return { ...step, status: 'Done' }
+    }
+    if (step.id === 'confirm-send') return { ...step, status: 'Active' }
+    return step.status === 'Active' ? { ...step, status: 'Done' } : step
+  })
+}
+
+function advanceExternalMessageMissionByCommand(current = {}, input = {}, text = '') {
+  const createdAt = new Date().toISOString()
+  const summary = externalMessageDraftSummary(current)
+  const nextStep = `${summary} 这样发可以吗？`
+  const action = makeAgentActionRecord({
+    role: 'Operator',
+    title: '草拟待确认回复',
+    status: 'needs_confirmation',
+    planStepId: 'draft-reply',
+    summary,
+    result: '待确认',
+    requiresReview: false,
+  }, { createdAt })
+
+  updateCurrentMission({
+    state: 'Running',
+    nextStep,
+    plan: advanceExternalMessagePlanToConfirm(current.plan),
+    agentActions: [...normalizeArray(current.agentActions), action],
+  })
+  appendCurrentMissionArtifact({
+    title: '拟发送内容',
+    kind: 'draft',
+    uri: `vela://missions/${encodeURIComponent(asText(current.id, 'mission'))}/external-message-draft`,
+    summary,
+    planStepId: 'draft-reply',
+  })
+  return appendCurrentMissionPermission({
+    action: nextStep,
+    risk: 'External message',
+    decision: 'requested',
+    summary,
+    reason: '发送前需要你确认。',
+    requestedBy: 'Vela Operator',
+    planStepId: 'confirm-send',
+    toolCallId: 'external.message.send',
+    screenContext: input.screenContext,
+  })
+}
+
 export function normalizeMission(value = {}) {
   const now = new Date().toISOString()
   const title = asText(value.title, asText(value.goal, 'Untitled mission'))
@@ -1562,6 +1634,9 @@ export function applyCurrentMissionCommand(input = {}) {
   const current = getCurrentMission()
   const nextState = isComplete ? 'Complete' : getNextCommandState(current.state)
   if (isContinue) {
+    if (current.state === 'Planned' && nextState === 'Running' && isExternalMessageMission(current)) {
+      return advanceExternalMessageMissionByCommand(current, input, text)
+    }
     return advanceCurrentMissionByCommand(current, nextState, input, text)
   }
   return updateCurrentMission({

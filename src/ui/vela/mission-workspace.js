@@ -52,6 +52,18 @@ function looksLikeExternalMessageIntent(value) {
   return /(?:wechat|微信|老婆|妻子|太太|媳妇|老公|先生|reply|message|回复|回个|发消息|发信息|发微信|发送)/i.test(text(value))
 }
 
+function isExternalMessageMission(mission = {}) {
+  return looksLikeExternalMessageIntent(mission.title)
+    || looksLikeExternalMessageIntent(mission.goal)
+    || asArray(mission.inputs).some(input => looksLikeExternalMessageIntent(input?.text))
+    || asArray(mission.plan).some(step => ['inspect-context', 'draft-reply', 'confirm-send'].includes(text(step?.id)))
+}
+
+function isExternalMessagePermission(permission = {}) {
+  return /^(external message|外部消息)$/i.test(text(permission.risk || permission.riskClass))
+    || looksLikeExternalMessageIntent(permission.action || permission.title || permission.summary)
+}
+
 function artifactId(artifact = {}, index = 0) {
   return text(artifact.id || artifact.uri || artifact.path || artifact.title || artifact.name, `artifact-${index + 1}`)
 }
@@ -133,16 +145,21 @@ function buildPermissionDetail(permission = {}) {
 function missionAttention(mission = {}) {
   const permission = latestPendingPermission(mission.permissions)
   if (permission) {
+    const externalMessage = isExternalMessagePermission(permission)
     return {
       kind: 'guard',
       panelId: 'guard',
       primaryAction: 'approve-permission',
       secondaryAction: 'open-spine-panel',
-      primaryLabel: 'Approve permission',
-      secondaryLabel: 'Open Guard',
-      caption: 'Permission gate',
-      title: text(permission.action || permission.title, 'Permission request'),
-      detail: buildPermissionDetail(permission),
+      primaryLabel: externalMessage ? 'Send this reply' : 'Approve permission',
+      secondaryLabel: externalMessage ? 'Review details' : 'Open Guard',
+      caption: externalMessage ? 'Send confirmation' : 'Permission gate',
+      title: externalMessage
+        ? text(permission.summary || permission.action || permission.title, 'Message draft')
+        : text(permission.action || permission.title, 'Permission request'),
+      detail: externalMessage
+        ? text(permission.reason, 'Vela will only send after you confirm.')
+        : buildPermissionDetail(permission),
       permission,
     }
   }
@@ -244,6 +261,10 @@ function assistantReplyForMission(mission = {}, attention = null) {
   const input = latestInput(mission)
   const value = text(input?.text || mission.title)
   if (attention?.kind === 'guard') {
+    if (isExternalMessagePermission(attention.permission)) {
+      const draft = text(attention.permission?.summary || attention.title, '我准备好了回复草稿。')
+      return `${draft} 这样发可以吗？`
+    }
     return '我已经准备好下一步了。这个动作会影响外部世界，所以先把要做的事给你确认。'
   }
   if (attention?.kind === 'review') {
@@ -295,6 +316,10 @@ function renderAssistantProcess(plan, mission = {}) {
       </div>
     </div>
   `
+}
+
+function shouldContinueThroughCommand(mission = {}) {
+  return mission.state === 'Planned' && isExternalMessageMission(mission)
 }
 
 function renderPlanCanvas(mission, plan) {
@@ -486,6 +511,10 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     if (input) input.value = ''
   })
   workspace.querySelector('.step-action')?.addEventListener('click', () => {
+    if (shouldContinueThroughCommand(mission)) {
+      Promise.resolve(onSubmitCommand?.('继续')).catch(() => {})
+      return
+    }
     Promise.resolve(onAdvanceMission?.(nextState)).catch(() => {})
   })
   for (const button of workspace.querySelectorAll('.workspace-mode-tab')) {
