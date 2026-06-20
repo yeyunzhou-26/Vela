@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { paths } from '../paths.js'
+import { findOpenCapabilitiesForText } from './capability-registry.js'
 
 export const MISSION_STATES = [
   'Draft',
@@ -119,6 +120,7 @@ export function createSeedMission(now = new Date().toISOString()) {
     toolCalls: [],
     permissions: [],
     memoryReferences: [],
+    capabilityReferences: [],
     voiceMetrics: [],
     reviewChecks: [],
     reviewResult: null,
@@ -342,6 +344,51 @@ function normalizeTextList(value) {
   }
   const single = asText(value)
   return single ? [single] : []
+}
+
+function normalizeCapabilityReferences(value = []) {
+  return normalizeArray(value).map((item, index) => ({
+    id: asText(item?.id || item?.capabilityId, `capability-${index + 1}`),
+    title: asText(item?.title || item?.label || item?.name, `Capability ${index + 1}`),
+    category: asText(item?.category || item?.type, 'tool'),
+    summary: asText(item?.summary || item?.detail, ''),
+    agentRole: normalizeAgentRole(item?.agentRole || item?.role, 'Operator'),
+    riskClasses: normalizeTextList(item?.riskClasses || item?.risks || item?.risk),
+    permissionBoundary: asText(item?.permissionBoundary || item?.guard || item?.policy, ''),
+    integrationStatus: asText(item?.integrationStatus || item?.status, 'planned'),
+    source: asText(item?.source || item?.sourceName, 'Vela capability registry'),
+    provenance: asText(item?.provenance || item?.uri || item?.url, ''),
+    licensePolicy: asText(item?.licensePolicy || item?.license, 'internal'),
+    reason: asText(item?.reason, ''),
+    confidence: asText(item?.confidence, ''),
+    evaluation: asText(item?.evaluation, ''),
+  }))
+}
+
+function capabilityMatchText(input = {}) {
+  return [
+    input.title,
+    input.goal,
+    ...normalizeArray(input.inputs).map(item => item?.text || item?.title || item?.summary),
+  ].map(value => asText(value)).filter(Boolean).join(' ')
+}
+
+function capabilityTraceEntry(missionId, capabilityReferences = [], createdAt = new Date().toISOString()) {
+  const ids = capabilityReferences.map(item => item.id).filter(Boolean)
+  if (!ids.length) return null
+  const primary = capabilityReferences[0]
+  const risks = [...new Set(capabilityReferences.flatMap(item => normalizeTextList(item.riskClasses)))]
+  return {
+    missionId,
+    type: 'capability.matched',
+    title: 'Capability matched',
+    detail: capabilityReferences.map(item => `${item.id}: ${item.reason || item.summary}`).join('; '),
+    result: primary.id,
+    capabilityIds: ids,
+    riskClasses: risks,
+    agentRole: primary.agentRole,
+    createdAt,
+  }
 }
 
 function toTimestampMs(value) {
@@ -896,6 +943,7 @@ export function normalizeMission(value = {}) {
     toolCalls: normalizeArray(value.toolCalls),
     permissions: normalizeArray(value.permissions),
     memoryReferences: normalizeArray(value.memoryReferences),
+    capabilityReferences: normalizeCapabilityReferences(value.capabilityReferences),
     voiceMetrics: normalizeArray(value.voiceMetrics),
     reviewChecks: normalizeArray(value.reviewChecks),
     reviewResult: value.reviewResult ?? null,
@@ -991,6 +1039,11 @@ export function startMission(input = {}) {
   const title = asText(input.title, asText(input.goal, 'Untitled mission'))
   const missionId = input.id || `mission-${Date.now()}`
   const plan = input.plan?.length ? input.plan : STARTED_PLAN.map(step => ({ ...step }))
+  const capabilityReferences = normalizeCapabilityReferences(
+    input.capabilityReferences?.length
+      ? input.capabilityReferences
+      : findOpenCapabilitiesForText(capabilityMatchText({ ...input, title }))
+  )
   const initialArtifacts = normalizeArray(input.artifacts)
   const shouldCreateBrief = initialArtifacts.length === 0
   const missionBrief = shouldCreateBrief
@@ -1023,6 +1076,8 @@ export function startMission(input = {}) {
       createdAt: now,
     })
   }
+  const capabilityTrace = capabilityTraceEntry(missionId, capabilityReferences, now)
+  if (capabilityTrace) trace.push(capabilityTrace)
   const mission = normalizeMission({
     id: missionId,
     title,
@@ -1039,6 +1094,7 @@ export function startMission(input = {}) {
     toolCalls: input.toolCalls || [],
     permissions: input.permissions || [],
     memoryReferences: input.memoryReferences || [],
+    capabilityReferences,
     voiceMetrics: input.voiceMetrics || [],
     reviewChecks: input.reviewChecks || [],
     reviewResult: input.reviewResult ?? null,

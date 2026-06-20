@@ -12,12 +12,14 @@ Purpose: land mission behavior before UI surfaces consume it.
 Files:
 
 - `src/vela/mission-runtime.js`
+- `src/vela/capability-registry.js`
 - `src/api.js`
 - `src/test-vela-mission.js`
 
 Review focus:
 
 - Mission state transitions
+- Open capability matching and source provenance
 - Permission modes and policy gates
 - Voice intent routing and privacy gates
 - Review check blocking and recovery actions

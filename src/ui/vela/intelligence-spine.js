@@ -25,6 +25,16 @@ function textList(value, fallback = '') {
   return result || fallback
 }
 
+function translatedTextList(value, fallback = '') {
+  const items = Array.isArray(value) ? value : (value ? [value] : [])
+  const result = items
+    .map(item => text(item?.summary || item?.title || item?.detail || item))
+    .filter(Boolean)
+    .map(item => zh(item))
+    .join('; ')
+  return result || fallback
+}
+
 function latencyText(value, fallback = 'No latency recorded') {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? `${Math.round(parsed)} ms` : fallback
@@ -118,6 +128,7 @@ const AUDIT_MARKS = {
   'command.routed': 'CMD',
   'command.stopped': 'CMD',
   'command.repair': 'CMD',
+  'capability.matched': 'CAP',
   'voice.intent.routed': 'VOX',
   'voice.privacy_gate': 'VOX',
   'plan.step.updated': 'STEP',
@@ -179,6 +190,7 @@ function buildSpineEntries(mission = {}) {
   const artifacts = asArray(mission.artifacts)
   const agentActions = asArray(mission.agentActions)
   const toolCalls = asArray(mission.toolCalls)
+  const capabilityReferences = asArray(mission.capabilityReferences)
   const permissions = asArray(mission.permissions)
   const memoryReferences = asArray(mission.memoryReferences)
   const voiceMetrics = asArray(mission.voiceMetrics)
@@ -189,6 +201,7 @@ function buildSpineEntries(mission = {}) {
   const latestArtifact = lastOf(artifacts)
   const latestAction = lastOf(agentActions)
   const latestTool = lastOf(toolCalls)
+  const primaryCapability = capabilityReferences[0] || null
   const latestPermission = lastOf(permissions)
   const latestMemory = lastOf(memoryReferences)
   const latestVoiceMetric = lastOf(voiceMetrics)
@@ -251,11 +264,17 @@ function buildSpineEntries(mission = {}) {
     },
     {
       ...baseEntry('tools'),
-      status: latestAction?.requiresReview || (latestTool?.status && !/^(ok|done|success|passed)$/i.test(latestTool.status)) ? 'watch' : (toolCalls.length || agentActions.length ? 'ready' : 'idle'),
-      summary: toolCalls.length || agentActions.length
+      status: latestAction?.requiresReview || (latestTool?.status && !/^(ok|done|success|passed)$/i.test(latestTool.status)) ? 'watch' : (toolCalls.length || agentActions.length || capabilityReferences.length ? 'ready' : 'idle'),
+      summary: toolCalls.length || agentActions.length || capabilityReferences.length
         ? 'Agent actions and tool calls are mapped back to mission execution.'
         : 'Agent actions and tool calls will appear here when Vela acts.',
       details: [
+        ['Capabilities', String(capabilityReferences.length)],
+        ['Primary capability', text(primaryCapability?.title || primaryCapability?.id, 'No capability matched yet')],
+        ['Capability source', text(primaryCapability?.source, 'No capability source recorded')],
+        ['Capability risks', translatedTextList(primaryCapability?.riskClasses, 'No capability risks recorded')],
+        ['Capability boundary', text(primaryCapability?.permissionBoundary, 'No capability boundary recorded')],
+        ['Capability status', text(primaryCapability?.integrationStatus, 'No capability status recorded')],
         ['Actions', String(agentActions.length)],
         ['Latest action', text(latestAction?.title, 'No agent action yet')],
         ['Action role', text(latestAction?.role, 'Operator')],

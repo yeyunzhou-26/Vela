@@ -18,10 +18,18 @@ function assert(condition, label) {
 
 try {
   const runtime = await import('./vela/mission-runtime.js')
+  const capabilityRegistry = await import('./vela/capability-registry.js')
+
+  const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
+  assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
+  assert(browserCapability.riskClasses.includes('Network'), 'browser capability declares network risk')
+  const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
+  assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
 
   const seed = runtime.getCurrentMission()
   assert(seed.id === 'mission-vela-shell', 'seed mission is available before persistence')
   assert(seed.state === 'Planned', 'seed mission state is Planned')
+  assert(Array.isArray(seed.capabilityReferences), 'seed mission normalizes capability references')
 
   const mission = runtime.startMission({
     title: 'Smoke Mission Runtime',
@@ -49,6 +57,8 @@ try {
   assert(mission.artifacts.at(-1).planStepId === 'one', 'started mission links initial artifact to plan step')
   assert(mission.trace.some(event => event.type === 'mission.started'), 'started mission records trace event')
   assert(mission.trace.at(-1).missionId === mission.id, 'started mission trace is linked to mission id')
+  assert(mission.capabilityReferences.some(item => item.id === 'agent.orchestration'), 'started mission records matched capability references')
+  assert(mission.trace.some(event => event.type === 'capability.matched'), 'started mission records capability match trace')
 
   const running = runtime.updateCurrentMission({ state: 'Running', nextStep: 'Continue runtime verification.' })
   assert(running.state === 'Running', 'mission transitions Planned -> Running')
@@ -356,6 +366,7 @@ try {
   assert(commandMission.artifacts.at(-1).planStepId === 'draft-plan', 'task brief links to the active planning step')
   assert(commandMission.trace.some(item => item.type === 'mission.brief.created'), 'task brief creation is auditable in trace')
   assert(commandMission.trace.at(-1).type === 'command.started_mission', 'command mission records command trace')
+  assert(commandMission.capabilityReferences.some(item => item.id === 'agent.orchestration'), 'plain command mission keeps capability routing evidence')
 
   const commandRunning = runtime.applyCurrentMissionCommand({ text: 'continue', source: 'test-command' })
   assert(commandRunning.state === 'Running', 'continue command moves Planned -> Running')
@@ -386,6 +397,13 @@ try {
   const commandCompleted = runtime.applyCurrentMissionCommand({ text: 'complete', source: 'test-command' })
   assert(commandCompleted.state === 'Complete', 'complete command succeeds after reviewer outcome')
 
+  const browserCommandMission = runtime.applyCurrentMissionCommand({
+    text: '帮我打开网页搜索资料并总结',
+    source: 'test-command',
+  })
+  assert(browserCommandMission.capabilityReferences.some(item => item.id === 'browser.web-agent'), 'browser command mission matches browser capability')
+  assert(!browserCommandMission.capabilityReferences.some(item => item.id === 'voice.system-entry'), 'browser command mission does not match voice from default next-step copy')
+
   const assistantMessageMission = runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
@@ -396,6 +414,8 @@ try {
   assert(assistantMessageMission.plan.find(item => item.id === 'confirm-send')?.label.includes('确认'), 'external message mission keeps final send confirmation')
   assert(assistantMessageMission.agentActions.at(-1).title === '准备处理外部消息', 'external message mission records backstage operator action')
   assert(assistantMessageMission.agentActions.at(-1).requiresReview === false, 'external message mission does not expose review as the first-screen action')
+  assert(assistantMessageMission.capabilityReferences.some(item => item.id === 'messages.outbound'), 'external message mission matches outbound message capability')
+  assert(assistantMessageMission.capabilityReferences.some(item => item.riskClasses.includes('External message')), 'external message capability declares send risk')
   const assistantDraft = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(assistantDraft.state === 'Waiting for permission', 'external message continue waits for send confirmation')
   assert(assistantDraft.nextStep.includes('这样发可以吗'), 'external message continue asks for natural send confirmation')

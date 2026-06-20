@@ -23,6 +23,7 @@ const slices = [
     name: 'Mission Runtime And API',
     files: [
       'src/vela/mission-runtime.js',
+      'src/vela/capability-registry.js',
       'src/api.js',
       'src/test-vela-mission.js',
     ],
