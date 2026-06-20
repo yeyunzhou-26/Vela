@@ -60,8 +60,12 @@ assert(spine.includes("spine.dataset.collapsed = willExpand ? 'false' : 'true'")
 assert(workspace.includes("workspace.setAttribute('aria-label', zh('Mission Workspace'))"), 'Mission Workspace has a localized aria contract')
 assert(workspace.includes('renderWorkspaceTabs(activeMode, artifacts.length)'), 'Mission Workspace uses one active workspace mode')
 assert(workspace.includes('missionAttention(mission)'), 'Mission Workspace surfaces guard and review attention without opening the spine')
+assert(workspace.includes('assistant-canvas'), 'Mission Workspace defaults to a chat-first assistant canvas')
+assert(workspace.includes('assistant-process-switcher'), 'Mission Workspace keeps process details secondary')
+assert(workspace.includes("zh('Tell Vela what to do')"), 'Mission input is phrased as a natural assistant composer')
 
 assert(locale.includes("'Mission Workspace': '任务工作区'"), 'locale localizes Mission Workspace')
+assert(locale.includes("'Vela Assistant': 'Vela 助手'"), 'locale localizes the chat-first assistant shell')
 assert(locale.includes("'Permission blocked': '许可已阻断'"), 'locale localizes permission blocked state')
 assert(locale.includes("'Vela Voice Layer': 'Vela 语音层'"), 'locale localizes voice layer')
 
@@ -84,7 +88,7 @@ console.log(JSON.stringify({
     'zh-CN Vela entry',
     'no Brain UI assets in Vela shell',
     'collapsed Intelligence Spine by default',
-    'single active Mission Workspace mode',
+    'chat-first Mission Workspace with secondary process details',
     'no dashboard chrome in Vela UI source',
   ],
 }, null, 2))

@@ -36,6 +36,22 @@ function lastOf(value) {
   return list[list.length - 1] || null
 }
 
+function latestInput(mission = {}) {
+  return lastOf(mission.inputs)
+}
+
+function latestAgentAction(mission = {}) {
+  return lastOf(mission.agentActions)
+}
+
+function latestArtifact(mission = {}) {
+  return lastOf(mission.artifacts)
+}
+
+function looksLikeExternalMessageIntent(value) {
+  return /(?:wechat|微信|老婆|妻子|太太|媳妇|老公|先生|reply|message|回复|回个|发消息|发信息|发微信|发送)/i.test(text(value))
+}
+
 function artifactId(artifact = {}, index = 0) {
   return text(artifact.id || artifact.uri || artifact.path || artifact.title || artifact.name, `artifact-${index + 1}`)
 }
@@ -203,36 +219,115 @@ function artifactReviewPayload(artifact = {}, artifactIdValue = '') {
 
 function renderWorkspaceTabs(activeMode, artifactCount) {
   return `
-    <div class="workspace-mode-tabs" role="tablist" aria-label="${escapeHtml(zh('Mission workspace mode'))}">
-      ${WORKSPACE_MODES.map(mode => {
-        const selected = mode.id === activeMode
-        const label = mode.id === 'artifacts' ? `${zh(mode.label)} ${artifactCount}` : zh(mode.label)
-        return `
-          <button
-            class="workspace-mode-tab"
-            type="button"
-            role="tab"
-            aria-selected="${selected ? 'true' : 'false'}"
-            data-workspace-mode="${escapeHtml(mode.id)}"
-          >${escapeHtml(label)}</button>
-        `
-      }).join('')}
+    <div class="assistant-process-switcher">
+      <span class="caption">${escapeHtml(zh('Process'))}</span>
+      <div class="workspace-mode-tabs" role="tablist" aria-label="${escapeHtml(zh('Mission workspace mode'))}">
+        ${WORKSPACE_MODES.map(mode => {
+          const selected = mode.id === activeMode
+          const label = mode.id === 'artifacts' ? `${zh(mode.label)} ${artifactCount}` : zh(mode.label)
+          return `
+            <button
+              class="workspace-mode-tab"
+              type="button"
+              role="tab"
+              aria-selected="${selected ? 'true' : 'false'}"
+              data-workspace-mode="${escapeHtml(mode.id)}"
+            >${escapeHtml(label)}</button>
+          `
+        }).join('')}
+      </div>
+    </div>
+  `
+}
+
+function assistantReplyForMission(mission = {}, attention = null) {
+  const input = latestInput(mission)
+  const value = text(input?.text || mission.title)
+  if (attention?.kind === 'guard') {
+    return '我已经准备好下一步了。这个动作会影响外部世界，所以先把要做的事给你确认。'
+  }
+  if (attention?.kind === 'review') {
+    return '我先把结果卡住，等后台复核通过再算完成。你不用看细节，必要时我会直接告诉你缺什么。'
+  }
+  if (mission.state === 'Waiting for user') {
+    return '我停在这里，等你一句话继续、修改，或者换个方向。'
+  }
+  if (looksLikeExternalMessageIntent(value)) {
+    return '好的，我先去看一下。拿到上下文后，我会把准备发送的内容给你确认。'
+  }
+  if (mission.state === 'Complete') {
+    return '这件事已经处理完了。'
+  }
+  if (mission.state === 'Running') {
+    return '我正在处理这件事。需要你决定的时候，我会只问关键问题。'
+  }
+  return '想让我办什么，直接说就行。'
+}
+
+function assistantStateLabel(mission = {}, attention = null) {
+  if (attention?.kind === 'guard') return '等待你确认'
+  if (attention?.kind === 'review') return '后台复核中'
+  if (mission.state === 'Waiting for permission') return '等待你确认'
+  if (mission.state === 'Running') return '正在处理'
+  if (mission.state === 'Complete') return '已完成'
+  return '待命'
+}
+
+function renderAssistantProcess(plan, mission = {}) {
+  const action = latestAgentAction(mission)
+  const artifact = latestArtifact(mission)
+  const activeStep = asArray(plan).find(step => text(step.status).toLowerCase() === 'active')
+    || asArray(plan).find(step => text(step.status).toLowerCase() === 'reviewing')
+    || asArray(plan)[0]
+  return `
+    <div class="assistant-process">
+      <div>
+        <span class="caption">${escapeHtml(zh('Now'))}</span>
+        <strong>${escapeHtml(zh(text(activeStep?.label, 'Ready')))}</strong>
+      </div>
+      <div>
+        <span class="caption">${escapeHtml(zh('Backstage'))}</span>
+        <strong>${escapeHtml(zh(text(action?.title || artifact?.title, 'No backstage action yet')))}</strong>
+      </div>
+      <div>
+        <span class="caption">${escapeHtml(zh('Next'))}</span>
+        <strong>${escapeHtml(zh(mission.nextStep))}</strong>
+      </div>
     </div>
   `
 }
 
 function renderPlanCanvas(mission, plan) {
+  const input = latestInput(mission)
+  const attention = missionAttention(mission)
+  const userText = text(input?.text)
   return `
-    <div class="canvas-kicker">${escapeHtml(zh(mission.activeSurface))}</div>
-    <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
-    <ol class="mission-plan" aria-label="${escapeHtml(zh('Mission plan'))}">
-      ${plan.map(step => `
-        <li data-status="${escapeHtml(String(step.status || '').toLowerCase())}">
-          <span>${escapeHtml(zh(step.label))}</span>
-          <strong>${escapeHtml(zh(step.status))}</strong>
-        </li>
-      `).join('')}
-    </ol>
+    <div class="assistant-canvas" aria-label="${escapeHtml(zh('Assistant chat'))}">
+      <div class="assistant-status">
+        <span class="assistant-mark" aria-hidden="true">V</span>
+        <div>
+          <span class="caption">${escapeHtml(zh('Vela Assistant'))}</span>
+          <strong>${escapeHtml(assistantStateLabel(mission, attention))}</strong>
+        </div>
+      </div>
+      <div class="assistant-thread">
+        <article class="chat-bubble assistant">
+          <span>${escapeHtml(zh('Vela'))}</span>
+          <p>${escapeHtml(assistantReplyForMission(mission, attention))}</p>
+        </article>
+        ${userText ? `
+          <article class="chat-bubble user">
+            <span>${escapeHtml(zh('You'))}</span>
+            <p>${escapeHtml(zh(userText))}</p>
+          </article>
+        ` : ''}
+        <article class="chat-bubble assistant current">
+          <span>${escapeHtml(zh('Current focus'))}</span>
+          <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
+        </article>
+      </div>
+      ${renderAssistantProcess(plan, mission)}
+    </div>
   `
 }
 
@@ -345,9 +440,9 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
   workspace.className = 'mission-workspace'
   workspace.setAttribute('aria-label', zh('Mission Workspace'))
   workspace.innerHTML = `
-    <div class="mission-header">
+    <div class="mission-header assistant-header">
       <div>
-        <span class="caption">${escapeHtml(zh('Mission Workspace'))}</span>
+        <span class="caption">${escapeHtml(zh('Vela Assistant'))}</span>
         <h1>${escapeHtml(zh(mission.title))}</h1>
       </div>
       <span class="state-chip">${escapeHtml(zh(mission.state))}</span>
@@ -368,7 +463,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
         <span class="caption">${escapeHtml(zh('Next step'))}</span>
         <strong>${escapeHtml(zh(mission.nextStep))}</strong>
       </div>
-      <button class="step-action" type="button">${escapeHtml(zhPrefix('Move to', zh(nextState)))}</button>
+      <button class="step-action" type="button" title="${escapeHtml(zhPrefix('Move to', zh(nextState)))}">${escapeHtml(zh('Continue'))}</button>
     </div>
 
     ${guardNotice ? `
@@ -379,7 +474,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     ` : ''}
 
     <form class="mission-input" aria-label="${escapeHtml(zh('Mission command input'))}">
-      <input type="text" placeholder="${escapeHtml(zh('Start a mission or ask Vela to continue'))}">
+      <input type="text" placeholder="${escapeHtml(zh('Tell Vela what to do'))}">
       <button type="submit">${escapeHtml(zh('Send'))}</button>
     </form>
   `

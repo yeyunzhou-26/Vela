@@ -386,6 +386,17 @@ try {
   const commandCompleted = runtime.applyCurrentMissionCommand({ text: 'complete', source: 'test-command' })
   assert(commandCompleted.state === 'Complete', 'complete command succeeds after reviewer outcome')
 
+  const assistantMessageMission = runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
+  assert(assistantMessageMission.title.includes('微信'), 'external message command starts a natural assistant mission')
+  assert(assistantMessageMission.nextStep.includes('先去看一下'), 'external message mission replies with natural progress')
+  assert(assistantMessageMission.plan.find(item => item.id === 'inspect-context')?.status === 'Active', 'external message mission focuses on inspecting context')
+  assert(assistantMessageMission.plan.find(item => item.id === 'confirm-send')?.label.includes('确认'), 'external message mission keeps final send confirmation')
+  assert(assistantMessageMission.agentActions.at(-1).title === '准备处理外部消息', 'external message mission records backstage operator action')
+  assert(assistantMessageMission.agentActions.at(-1).requiresReview === false, 'external message mission does not expose review as the first-screen action')
+
   const chineseCommandMission = runtime.applyCurrentMissionCommand({ text: '开始 中文命令任务', source: 'test-command' })
   assert(chineseCommandMission.title === '中文命令任务', 'Chinese start command creates a named mission')
   assert(chineseCommandMission.artifacts.at(-1).summary.includes('中文命令任务'), 'Chinese start command creates a localized task brief')

@@ -30,22 +30,28 @@ const VOICE_LATENCY_TARGETS_MS = {
   finalAsrToFirstToken: 1500,
   responseSegmentToFirstAudio: 800,
 }
-const SEED_MISSION_TITLE = '开始一项 Vela 任务'
-const SEED_MISSION_GOAL = '告诉 Vela 你想完成什么，它会把任务整理成目标、计划、证据、权限和复核。'
-const SEED_MISSION_NEXT_STEP = '在下方输入“开始 + 你的任务”，或者直接说出想完成的事。'
+const SEED_MISSION_TITLE = 'Vela'
+const SEED_MISSION_GOAL = '直接告诉 Vela 你想办什么。它会在后台整理任务、调用工具、保留证据，并在发送消息、改文件或高风险动作前自然确认。'
+const SEED_MISSION_NEXT_STEP = '直接说一件想办的事，例如：帮我打开微信，给我老婆回个信息。'
 const STARTED_MISSION_NEXT_STEP = '检查任务计划，确认后输入“继续”。'
 const RUNNING_MISSION_NEXT_STEP = '任务已进入执行阶段；完成产出后输入“继续”进入审查。'
 const REVIEWING_MISSION_NEXT_STEP = '记录审查结果后输入“审查通过”，再输入“完成”。'
 const MISSION_BRIEF_TITLE = '任务简报'
 const SEED_PLAN = [
-  { id: 'describe-mission', label: '说出你要完成的任务', status: 'Active' },
-  { id: 'review-plan', label: '确认 Vela 生成的计划', status: 'Next' },
-  { id: 'execute-review', label: '执行、产出并复核', status: 'Next' },
+  { id: 'describe-mission', label: '说出你想办的事', status: 'Active' },
+  { id: 'work-backstage', label: 'Vela 在后台处理', status: 'Next' },
+  { id: 'confirm-action', label: '关键动作前确认', status: 'Next' },
 ]
 const STARTED_PLAN = [
   { id: 'clarify-goal', label: '确认任务目标', status: 'Done' },
   { id: 'draft-plan', label: '整理执行计划', status: 'Active' },
   { id: 'execute-review', label: '产出结果并复核', status: 'Next' },
+]
+const PERSONAL_ASSISTANT_MESSAGE_PLAN = [
+  { id: 'understand-request', label: '理解你要办的事', status: 'Done' },
+  { id: 'inspect-context', label: '查看相关应用和上下文', status: 'Active' },
+  { id: 'draft-reply', label: '草拟可发送内容', status: 'Next' },
+  { id: 'confirm-send', label: '确认后再发送', status: 'Next' },
 ]
 const LEGACY_DEFAULT_PLAN_LABELS = new Map([
   ['clarify-goal|Clarify mission goal', '确认任务目标'],
@@ -69,6 +75,7 @@ const COMMAND_REPAIR_RE = /^(?:(?:not that|change it to|change that to|repair th
 const VOICE_CREDENTIAL_RE = /(?:\b(?:password|passcode|api key|secret|token|credential|private key)\b|密码|密钥|令牌|凭证|凭据)/i
 const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|reply)\b|发给|发送|邮件|消息|回复|发布)/i
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
+const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:wechat|message|reply|dm|text|send)\b|微信|老婆|妻子|太太|媳妇|老公|先生|回复|回个|发消息|发信息|发微信|转发|发送)/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
@@ -768,6 +775,36 @@ function classifyVoicePrivacyRisk(transcript) {
   return null
 }
 
+function isExternalMessageIntent(text) {
+  const value = asText(text)
+  return Boolean(value) && (VOICE_EXTERNAL_MESSAGE_RE.test(value) || ASSISTANT_EXTERNAL_MESSAGE_RE.test(value))
+}
+
+function assistantPlanForText(text) {
+  return (isExternalMessageIntent(text) ? PERSONAL_ASSISTANT_MESSAGE_PLAN : STARTED_PLAN)
+    .map(step => ({ ...step }))
+}
+
+function assistantNextStepForText(text) {
+  if (isExternalMessageIntent(text)) {
+    return '好的，我先去看一下。拿到上下文后，我会把准备发送的内容给你确认。'
+  }
+  return STARTED_MISSION_NEXT_STEP
+}
+
+function makeAssistantAgentAction(text, createdAt = new Date().toISOString()) {
+  if (!isExternalMessageIntent(text)) return null
+  return makeAgentActionRecord({
+    role: 'Operator',
+    title: '准备处理外部消息',
+    status: 'waiting_for_context',
+    planStepId: 'inspect-context',
+    summary: 'Vela 会先查看相关应用和对话上下文，草拟回复；真正发送前必须获得用户确认。',
+    result: '等待上下文',
+    requiresReview: false,
+  }, { createdAt })
+}
+
 export function normalizeMission(value = {}) {
   const now = new Date().toISOString()
   const title = asText(value.title, asText(value.goal, 'Untitled mission'))
@@ -1441,11 +1478,14 @@ export function applyCurrentMissionCommand(input = {}) {
     const mission = startMission({
       title: missionText,
       goal: missionText,
-      nextStep: STARTED_MISSION_NEXT_STEP,
+      nextStep: assistantNextStepForText(missionText),
+      plan: assistantPlanForText(missionText),
       inputs: [record],
       createdAt: now,
       updatedAt: now,
     })
+    const assistantAction = makeAssistantAgentAction(missionText, now)
+    if (assistantAction) appendCurrentMissionAgentAction(assistantAction)
     return appendCurrentMissionTrace({
       type: 'command.started_mission',
       title: 'Command started mission',
