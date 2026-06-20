@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "provider": "deepseek",
+  "apiKey": "REPLACE_WITH_CHAT_PROVIDER_API_KEY",
+  "model": "deepseek-v4-pro",
+  "temperature": 0.7,
+  "security": {
+    "fileSandbox": true,
+    "execSandbox": true,
+    "blockedTools": []
+  },
+  "voice": {
+    "voiceProvider": "aliyun",
+    "aliyunApiKey": "REPLACE_WITH_DASHSCOPE_API_KEY"
+  },
+  "tts": {
+    "ttsProvider": "doubao",
+    "ttsApiKey": "REPLACE_WITH_TTS_API_KEY",
+    "ttsVoiceId": "zh_female_xiaohe_uranus_bigtts"
+  },
+  "embedding": {
+    "provider": "disabled"
+  },
+  "webSearch": {
+    "enabled": false
+  }
+}
