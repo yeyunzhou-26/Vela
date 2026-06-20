@@ -40,6 +40,8 @@ const ZH = {
   Repair: '修正',
   continue: '继续',
   stop: '停止',
+  typed: '文本输入',
+  voice: '语音',
   'not that': '不是这个',
   'change it to': '改成',
   'change that to': '改成',
@@ -74,6 +76,7 @@ const ZH = {
   allowed: '已允许',
   approval_required: '需要批准',
   review_required: '需要审查',
+  required: '需要审查',
   ready: '就绪',
   passed: '已通过',
   failed: '失败',
@@ -192,10 +195,13 @@ const ZH = {
   'Agent action': '智能体动作',
   Agent: '智能体',
   Operator: '操作员',
+  Planner: '规划者',
   'Tool call': '工具调用',
   'Memory reference': '记忆引用',
   'Permission record': '许可记录',
   Builder: '构建者',
+  Researcher: '研究者',
+  Reviewer: '审查者',
   'Inspect Spine': '检查右侧脊柱',
   'No agent actions recorded yet.': '还没有记录智能体动作。',
   'No mission memory attached yet.': '还没有关联任务记忆。',
@@ -256,6 +262,7 @@ const ZH = {
   'Command repair requested': '命令请求修正',
   'Command started mission': '命令创建任务',
   'Command routed': '命令已路由',
+  'Input added': '输入已记录',
   'Tool called': '工具已调用',
   'State changed': '状态已变更',
   'Review check failed': '审查检查失败',
@@ -327,7 +334,6 @@ const ZH = {
   'Recovery failures': '恢复失败',
   Outcome: '结果',
   'Not reviewed yet': '尚未审查',
-  Reviewer: '审查者',
   'Reviewer not assigned': '尚未指定审查者',
   'No review summary yet': '还没有审查摘要',
   'Review evidence': '审查证据',
@@ -468,6 +474,10 @@ export function zh(value) {
   }
   if (/^Tool called:\s*/i.test(text)) {
     return `工具已调用：${text.replace(/^Tool called:\s*/i, '')}`
+  }
+  if (/^(Planner|Builder|Researcher|Reviewer|Operator):\s*/i.test(text)) {
+    const [, role, detail] = text.match(/^(Planner|Builder|Researcher|Reviewer|Operator):\s*(.*)$/i) || []
+    return `${zh(role)}：${zh(detail)}`
   }
   if (/^Review check failed:\s*/i.test(text)) {
     return `审查检查失败：${zh(text.replace(/^Review check failed:\s*/i, ''))}`

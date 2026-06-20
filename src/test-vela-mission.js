@@ -359,9 +359,18 @@ try {
 
   const commandRunning = runtime.applyCurrentMissionCommand({ text: 'continue', source: 'test-command' })
   assert(commandRunning.state === 'Running', 'continue command moves Planned -> Running')
+  assert(commandRunning.plan.find(item => item.id === 'draft-plan')?.status === 'Done', 'continue command marks planning step done')
+  assert(commandRunning.plan.find(item => item.id === 'execute-review')?.status === 'Active', 'continue command activates execution step')
+  assert(commandRunning.agentActions.at(-1).role === 'Planner', 'continue command records Planner action')
+  assert(commandRunning.agentActions.at(-1).planStepId === 'draft-plan', 'Planner action links to planning step')
+  assert(commandRunning.trace.at(-1).type === 'agent.action', 'Planner action is auditable in trace')
 
   const commandReviewing = runtime.applyCurrentMissionCommand({ text: 'continue', source: 'test-command' })
   assert(commandReviewing.state === 'Reviewing', 'continue command moves Running -> Reviewing')
+  assert(commandReviewing.plan.find(item => item.id === 'execute-review')?.status === 'Reviewing', 'continue command marks execution step reviewing')
+  assert(commandReviewing.agentActions.at(-1).role === 'Builder', 'review continue records Builder action')
+  assert(commandReviewing.agentActions.at(-1).requiresReview === true, 'Builder action requires reviewer outcome')
+  assert(commandReviewing.trace.at(-1).reviewOutcome === 'required', 'Builder action trace records review requirement')
 
   let commandReviewGateRejected = false
   try {
@@ -382,8 +391,10 @@ try {
   assert(chineseCommandMission.artifacts.at(-1).summary.includes('中文命令任务'), 'Chinese start command creates a localized task brief')
   const chineseCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(chineseCommandRunning.state === 'Running', 'Chinese continue command moves Planned -> Running')
+  assert(chineseCommandRunning.plan.find(item => item.id === 'execute-review')?.status === 'Active', 'Chinese continue command advances active plan step')
   const chineseCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(chineseCommandReviewing.state === 'Reviewing', 'Chinese continue command moves Running -> Reviewing')
+  assert(chineseCommandReviewing.agentActions.at(-1).role === 'Builder', 'Chinese review continue records Builder action')
   const chineseCommandReviewed = runtime.applyCurrentMissionCommand({ text: '审查通过', source: 'test-command' })
   assert(chineseCommandReviewed.reviewResult?.outcome === 'passed', 'Chinese review command records reviewer outcome')
   const chineseCommandCompleted = runtime.applyCurrentMissionCommand({ text: '完成', source: 'test-command' })
@@ -423,6 +434,8 @@ try {
   })
   assert(voiceRunning.state === 'Running', 'voice continue moves Planned -> Running')
   assert(voiceRunning.inputs.at(-1).source === 'voice', 'voice continue captures input source')
+  assert(voiceRunning.plan.find(item => item.id === 'execute-review')?.status === 'Active', 'voice continue advances mission plan')
+  assert(voiceRunning.agentActions.some(item => item.role === 'Planner'), 'voice continue records Planner action through command pipeline')
   assert(voiceRunning.voiceMetrics.at(-1).latencyMs.speechEndToIntent === 120, 'voice intent records speech-to-intent latency')
   assert(voiceRunning.voiceMetrics.at(-1).latencyMs.finalAsrToFirstToken === 900, 'voice intent records first-token latency')
   assert(voiceRunning.voiceMetrics.at(-1).violations.length === 0, 'voice intent latency clears targets')

@@ -34,6 +34,8 @@ const SEED_MISSION_TITLE = '开始一项 Vela 任务'
 const SEED_MISSION_GOAL = '告诉 Vela 你想完成什么，它会把任务整理成目标、计划、证据、权限和复核。'
 const SEED_MISSION_NEXT_STEP = '在下方输入“开始 + 你的任务”，或者直接说出想完成的事。'
 const STARTED_MISSION_NEXT_STEP = '检查任务计划，确认后输入“继续”。'
+const RUNNING_MISSION_NEXT_STEP = '任务已进入执行阶段；完成产出后输入“继续”进入审查。'
+const REVIEWING_MISSION_NEXT_STEP = '记录审查结果后输入“审查通过”，再输入“完成”。'
 const MISSION_BRIEF_TITLE = '任务简报'
 const SEED_PLAN = [
   { id: 'describe-mission', label: '说出你要完成的任务', status: 'Active' },
@@ -530,6 +532,13 @@ function briefPlanStepId(plan = []) {
     || 'draft-plan'
 }
 
+function activePlanStepId(plan = [], fallback = '') {
+  return normalizeArray(plan).find(step => step?.status === 'Active')?.id
+    || normalizeArray(plan).find(step => step?.status === 'Reviewing')?.id
+    || normalizeArray(plan).find(step => step?.id)?.id
+    || fallback
+}
+
 function makeMissionBriefArtifact({ missionId, title, planStepId, createdAt } = {}) {
   const safeMissionId = encodeURIComponent(asText(missionId, makeId('mission')))
   const missionTitle = asText(title, 'Untitled mission')
@@ -542,6 +551,103 @@ function makeMissionBriefArtifact({ missionId, title, planStepId, createdAt } = 
     planStepId: asText(planStepId, 'draft-plan'),
     createdAt: asText(createdAt, new Date().toISOString()),
   }
+}
+
+function advancePlanForCommand(plan = [], previousState = '', nextState = '') {
+  const normalized = normalizePlan(plan)
+  if (previousState === 'Planned' && nextState === 'Running') {
+    let promotedNext = false
+    return normalized.map(step => {
+      if (step.status === 'Active') return { ...step, status: 'Done' }
+      if (!promotedNext && step.status === 'Next') {
+        promotedNext = true
+        return { ...step, status: 'Active' }
+      }
+      return step
+    })
+  }
+  if (previousState === 'Running' && nextState === 'Reviewing') {
+    return normalized.map(step => (
+      step.status === 'Active' ? { ...step, status: 'Reviewing' } : step
+    ))
+  }
+  return normalized
+}
+
+function commandNextStep(previousState = '', nextState = '', fallback = '') {
+  if (previousState === 'Planned' && nextState === 'Running') return RUNNING_MISSION_NEXT_STEP
+  if (previousState === 'Running' && nextState === 'Reviewing') return REVIEWING_MISSION_NEXT_STEP
+  if (nextState === 'Reviewing') return REVIEWING_MISSION_NEXT_STEP
+  return fallback
+}
+
+function makeAgentActionRecord(input = {}, options = {}) {
+  const role = normalizeAgentRole(input.role || input.agentRole, 'Operator')
+  const title = asText(input.title || input.action || input.summary, `${role} action`)
+  const status = asText(input.status, 'planned')
+  return {
+    id: asText(input.id, makeId('agent-action')),
+    role,
+    title,
+    status,
+    planStepId: asText(input.planStepId, ''),
+    summary: asText(input.summary || input.detail, ''),
+    result: asText(input.result, ''),
+    requiresReview: Boolean(input.requiresReview),
+    createdAt: asText(options.createdAt || input.createdAt, new Date().toISOString()),
+  }
+}
+
+function makeCommandAdvanceAgentAction(mission = {}, previousState = '', nextState = '', createdAt = '') {
+  if (previousState === 'Planned' && nextState === 'Running') {
+    const planStepId = activePlanStepId(mission.plan, 'draft-plan')
+    return makeAgentActionRecord({
+      role: 'Planner',
+      title: '确认任务计划',
+      status: 'done',
+      planStepId,
+      summary: `规划者已确认「${asText(mission.title, '当前任务')}」的任务计划，准备进入执行。`,
+      result: '准备执行',
+      requiresReview: false,
+    }, { createdAt })
+  }
+  if (previousState === 'Running' && nextState === 'Reviewing') {
+    const planStepId = activePlanStepId(mission.plan, 'execute-review')
+    return makeAgentActionRecord({
+      role: 'Builder',
+      title: '提交执行结果待审查',
+      status: '待审查',
+      planStepId,
+      summary: `构建者已将「${asText(mission.title, '当前任务')}」推进到审查前状态，等待审查者检查证据。`,
+      result: '需要审查',
+      requiresReview: true,
+    }, { createdAt })
+  }
+  return null
+}
+
+function advanceCurrentMissionByCommand(current = {}, nextState = '', input = {}, text = '') {
+  const previousState = asText(current.state, '')
+  const createdAt = new Date().toISOString()
+  const action = makeCommandAdvanceAgentAction(current, previousState, nextState, createdAt)
+  const next = updateCurrentMission({
+    state: nextState,
+    nextStep: commandNextStep(previousState, nextState, current.nextStep),
+    plan: advancePlanForCommand(current.plan, previousState, nextState),
+    agentActions: action ? [...normalizeArray(current.agentActions), action] : current.agentActions,
+  })
+  if (!action) return next
+  return appendCurrentMissionTrace({
+    type: 'agent.action',
+    title: `${action.role}: ${action.title}`,
+    detail: action.summary || text,
+    planStepId: action.planStepId,
+    agentRole: action.role,
+    result: action.result || action.status,
+    reviewOutcome: action.requiresReview ? 'required' : '',
+    screenContext: input.screenContext,
+    createdAt: action.createdAt,
+  })
 }
 
 function normalizeScreenContext(value = {}) {
@@ -967,20 +1073,7 @@ export function appendCurrentMissionToolCall(input = {}) {
 }
 
 export function appendCurrentMissionAgentAction(input = {}) {
-  const role = normalizeAgentRole(input.role || input.agentRole, 'Operator')
-  const title = asText(input.title || input.action || input.summary, `${role} action`)
-  const status = asText(input.status, 'planned')
-  const record = {
-    id: asText(input.id, makeId('agent-action')),
-    role,
-    title,
-    status,
-    planStepId: asText(input.planStepId, ''),
-    summary: asText(input.summary || input.detail, ''),
-    result: asText(input.result, ''),
-    requiresReview: Boolean(input.requiresReview),
-    createdAt: new Date().toISOString(),
-  }
+  const record = makeAgentActionRecord(input)
   const store = readStore()
   const current = store.missions.find(mission => mission.id === store.currentMissionId) || store.missions[0] || createSeedMission()
   const next = withTrace({
@@ -988,11 +1081,11 @@ export function appendCurrentMissionAgentAction(input = {}) {
     agentActions: [...(current.agentActions || []), record],
   }, {
     type: 'agent.action',
-    title: `${role}: ${title}`,
+    title: `${record.role}: ${record.title}`,
     detail: record.summary,
     planStepId: record.planStepId,
-    agentRole: role,
-    result: record.result || status,
+    agentRole: record.role,
+    result: record.result || record.status,
     reviewOutcome: record.requiresReview ? 'required' : '',
     createdAt: record.createdAt,
   })
@@ -1428,10 +1521,13 @@ export function applyCurrentMissionCommand(input = {}) {
 
   const current = getCurrentMission()
   const nextState = isComplete ? 'Complete' : getNextCommandState(current.state)
+  if (isContinue) {
+    return advanceCurrentMissionByCommand(current, nextState, input, text)
+  }
   return updateCurrentMission({
     state: nextState,
     nextStep: nextState === 'Reviewing'
-      ? 'Record reviewer outcome before completion.'
+      ? REVIEWING_MISSION_NEXT_STEP
       : current.nextStep,
   })
 }
