@@ -30,8 +30,16 @@ function makeAdapterResultId(capabilityId = 'capability') {
   return `artifact-${capabilityId.replace(/[^a-z0-9]+/gi, '-')}-result-${Date.now()}`
 }
 
-function primaryCapability(mission = {}) {
-  return normalizeArray(mission.capabilityReferences).find(item => item?.id === 'browser.web-agent') || null
+function capabilityById(mission = {}, id = '') {
+  return normalizeArray(mission.capabilityReferences).find(item => item?.id === id) || null
+}
+
+function primaryBrowserCapability(mission = {}) {
+  return capabilityById(mission, 'browser.web-agent')
+}
+
+function primaryDesktopCapability(mission = {}) {
+  return capabilityById(mission, 'desktop.app-control')
 }
 
 function latestBrowserPrepareTool(mission = {}) {
@@ -52,10 +60,27 @@ function hasBrowserResultForPrepare(mission = {}, prepareToolId = '') {
 }
 
 function shouldExecuteBrowserAdapter(mission = {}) {
-  const capability = primaryCapability(mission)
+  const capability = primaryBrowserCapability(mission)
   if (capability?.id !== 'browser.web-agent') return false
   const prepareTool = latestBrowserPrepareTool(mission)
   return !!prepareTool && !hasBrowserResultForPrepare(mission, prepareTool.id)
+}
+
+function latestDesktopPrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'desktop.app-control.prepare'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasDesktopResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
+  ))
 }
 
 function browserRiskForMission(mission = {}, input = {}) {
@@ -76,7 +101,7 @@ function browserRiskForMission(mission = {}, input = {}) {
 }
 
 function planBrowserAdapterRun(mission = {}, input = {}) {
-  const capability = primaryCapability(mission)
+  const capability = primaryBrowserCapability(mission)
   if (capability?.id !== 'browser.web-agent') return null
 
   const planStepId = activePlanStepId(mission.plan)
@@ -125,8 +150,50 @@ function planBrowserAdapterRun(mission = {}, input = {}) {
   return run
 }
 
+function desktopTarget(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  if (/(?:微信|wechat)/i.test(text)) {
+    return { appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }
+  }
+  if (/(?:设置|settings|system settings)/i.test(text)) {
+    return { appId: 'settings', appName: '系统设置', appUrl: 'app://system-settings' }
+  }
+  return { appId: 'desktop-app', appName: '目标应用', appUrl: 'app://target' }
+}
+
+function planDesktopAdapterRun(mission = {}, input = {}) {
+  const capability = primaryDesktopCapability(mission)
+  if (capability?.id !== 'desktop.app-control') return null
+
+  const planStepId = activePlanStepId(mission.plan, 'inspect-context')
+  const toolCallId = makeAdapterToolId(capability.id)
+  const target = desktopTarget(mission, input)
+  const summary = `桌面代理已准备好处理「${target.appName}」相关任务。当前原型只记录模拟打开应用和模拟读取上下文，不会真的打开应用、截图、读取真实屏幕或发送消息；接入真实桌面控制前必须经过 Screen/Execute Guard。`
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'desktop.app-control.prepare',
+      role: 'Operator',
+      status: 'prepared',
+      planStepId,
+      risk: 'Screen',
+      result: summary,
+    },
+    artifact: {
+      title: '桌面执行方案',
+      kind: 'plan',
+      uri: `vela://capabilities/desktop.app-control/runs/${toolCallId}`,
+      summary,
+      planStepId,
+    },
+    nextStep: '桌面代理已完成安全预检；继续后会生成模拟上下文证据，真实 App 操作仍需单独确认。',
+  }
+}
+
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
   return planBrowserAdapterRun(mission, input)
+    || planDesktopAdapterRun(mission, input)
 }
 
 function browserExecutionSummary(mission = {}) {
@@ -164,7 +231,7 @@ function normalizeBrowserStage(stage = {}, index = 0) {
 }
 
 function executeBrowserAdapterRun(mission = {}, input = {}) {
-  const capability = primaryCapability(mission)
+  const capability = primaryBrowserCapability(mission)
   if (capability?.id !== 'browser.web-agent') return null
 
   const prepareTool = latestBrowserPrepareTool(mission)
@@ -224,11 +291,11 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
       failures: ok ? [] : normalizeArray(readResult?.failures).map(item => asText(item.reason || item.error || item.url)).filter(Boolean),
     },
     toolStages: normalizeArray(readResult?.stages).map((stage, index) => ({
-    toolName: stage.tool,
-    status: stage.status,
-    stage: `browser-read-${index + 1}`,
-    summary: stage.summary || stage.reason || stage.url,
-    url: stage.url,
+      toolName: stage.tool,
+      status: stage.status,
+      stage: `browser-read-${index + 1}`,
+      summary: stage.summary || stage.reason || stage.url,
+      url: stage.url,
       planStepId,
       role: 'Operator',
     })),
@@ -238,8 +305,97 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function desktopExecutionSummary(target = {}) {
+  return `已完成「${target.appName}」桌面控制原型链路：模拟打开应用、模拟读取当前上下文，并确认没有真实启动应用、截图、读取真实屏幕或发送外部消息。`
+}
+
+function executeDesktopAdapterRun(mission = {}, input = {}) {
+  const capability = primaryDesktopCapability(mission)
+  if (capability?.id !== 'desktop.app-control') return null
+
+  const prepareTool = latestDesktopPrepareTool(mission)
+  if (!prepareTool || hasDesktopResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan, 'inspect-context')
+  const toolCallId = makeAdapterToolId('desktop.app-control.inspect')
+  const artifactId = makeAdapterResultId('desktop.app-control')
+  const target = desktopTarget(mission, input)
+  const summary = desktopExecutionSummary(target)
+  const evidence = [
+    `目标应用：${target.appName}`,
+    `模拟打开：${target.appUrl}`,
+    '模拟屏幕上下文：screen://mock/current-app',
+    '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
+    '接入真实桌面控制前必须经过 Screen/Execute Guard。',
+  ]
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'desktop.app-control.inspect',
+      role: 'Operator',
+      status: 'ok',
+      planStepId,
+      risk: 'Screen',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title: '桌面上下文摘要',
+      kind: 'desktop-context',
+      uri: `vela://capabilities/desktop.app-control/results/${prepareTool.id}`,
+      summary,
+      planStepId,
+    },
+    reviewCheck: {
+      key: `desktop-context-${asText(mission.id, 'mission')}`,
+      title: '桌面上下文复核',
+      outcome: 'passed',
+      reviewer: 'Vela Desktop Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: '桌面控制原型只产生模拟上下文证据，没有执行真实桌面或外部发送动作。',
+      evidence,
+      failures: [],
+    },
+    toolStages: [
+      {
+        toolName: 'desktop.open-app',
+        status: 'ok',
+        stage: 'desktop-open-app',
+        summary: `模拟打开 ${target.appName}，未启动真实应用。`,
+        url: target.appUrl,
+        planStepId,
+        role: 'Operator',
+      },
+      {
+        toolName: 'desktop.screen-context',
+        status: 'ok',
+        stage: 'desktop-screen-context',
+        summary: '模拟读取当前 App 上下文，未截图或读取真实屏幕。',
+        url: 'screen://mock/current-app',
+        planStepId,
+        role: 'Operator',
+      },
+      {
+        toolName: 'desktop.external-effect',
+        status: 'skipped',
+        stage: 'desktop-no-hidden-send',
+        summary: '未发送消息、未提交表单、未触发外部效果。',
+        url: 'external://none',
+        planStepId,
+        role: 'Operator',
+      },
+    ],
+    nextStep: '桌面上下文原型结果已准备好；真实 App 控制仍需你确认授权。',
+  }
+}
+
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
   return executeBrowserAdapterRun(mission, input)
+    || executeDesktopAdapterRun(mission, input)
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {

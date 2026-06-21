@@ -77,7 +77,7 @@ const COMMAND_REPAIR_RE = /^(?:(?:not that|change it to|change that to|repair th
 const VOICE_CREDENTIAL_RE = /(?:\b(?:password|passcode|api key|secret|token|credential|private key)\b|密码|密钥|令牌|凭证|凭据)/i
 const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|reply)\b|发给|发送|邮件|消息|回复|发布)/i
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
-const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:wechat|message|reply|dm|text|send)\b|微信|老婆|妻子|太太|媳妇|老公|先生|回复|回个|发消息|发信息|发微信|转发|发送)/i
+const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回复|回个|发消息|发信息|发微信|转发|发送)/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
@@ -914,6 +914,99 @@ function externalMessageDraftSummary(mission = {}) {
   return `我准备这样回：「${draftExternalMessageText(mission)}」`
 }
 
+function externalMessageDesktopTarget(mission = {}) {
+  const sourceText = [
+    mission.title,
+    mission.goal,
+    ...normalizeArray(mission.inputs).map(input => input?.text),
+  ].map(value => asText(value)).join(' ')
+  if (/(?:微信|wechat)/i.test(sourceText)) {
+    return { appName: '微信', appUrl: 'app://wechat' }
+  }
+  if (/(?:email|邮件|邮箱)/i.test(sourceText)) {
+    return { appName: '邮件', appUrl: 'app://mail' }
+  }
+  return { appName: '消息应用', appUrl: 'app://messages' }
+}
+
+function hasExternalMessageDesktopContext(mission = {}) {
+  return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'desktop.app-control.inspect')
+}
+
+function appendExternalMessageDesktopContext(mission = {}) {
+  if (hasExternalMessageDesktopContext(mission)) return getCurrentMission()
+  const planStepId = 'inspect-context'
+  const toolCallId = makeId('tool-desktop-app-control-inspect')
+  const artifactId = makeId('artifact-desktop-context')
+  const target = externalMessageDesktopTarget(mission)
+  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；没有真实打开应用、截图、读取真实屏幕或发送消息。`
+
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'desktop.app-control.inspect',
+    role: 'Operator',
+    status: 'ok',
+    planStepId,
+    risk: 'Screen',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'desktop.open-app',
+    toolCallId,
+    role: 'Operator',
+    status: 'ok',
+    stage: 'external-message-open-app',
+    url: target.appUrl,
+    planStepId,
+    summary: `模拟打开${target.appName}，未启动真实应用。`,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'desktop.screen-context',
+    toolCallId,
+    role: 'Operator',
+    status: 'ok',
+    stage: 'external-message-screen-context',
+    url: 'screen://mock/current-chat',
+    planStepId,
+    summary: '模拟读取当前对话上下文，未截图或读取真实屏幕。',
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'desktop.external-effect',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'external-message-no-hidden-send',
+    url: 'external://none',
+    planStepId,
+    summary: '未发送消息，等待用户确认草稿。',
+  })
+  appendCurrentMissionArtifact({
+    id: artifactId,
+    title: `${target.appName}上下文摘要`,
+    kind: 'desktop-context',
+    uri: `vela://capabilities/desktop.app-control/results/${toolCallId}`,
+    summary,
+    planStepId,
+  })
+  return appendCurrentMissionReviewCheck({
+    key: `external-message-desktop-context-${asText(mission.id, 'mission')}`,
+    title: '桌面上下文复核',
+    outcome: 'passed',
+    reviewer: 'Vela Desktop Reviewer',
+    planStepId,
+    artifactId,
+    toolCallId,
+    summary: '外部消息任务已先完成桌面上下文原型检查；没有隐藏发送动作。',
+    evidence: [
+      `目标应用：${target.appName}`,
+      `模拟打开：${target.appUrl}`,
+      '模拟屏幕上下文：screen://mock/current-chat',
+      '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
+      '真正发送前仍需要 External message 确认。',
+    ],
+  })
+}
+
 function advanceExternalMessagePlanToConfirm(plan = []) {
   return normalizePlan(plan).map(step => {
     if (step.id === 'understand-request' || step.id === 'inspect-context' || step.id === 'draft-reply') {
@@ -944,6 +1037,7 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     plan: advanceExternalMessagePlanToConfirm(current.plan),
     agentActions: [...normalizeArray(current.agentActions), action],
   })
+  appendExternalMessageDesktopContext(current)
   appendCurrentMissionArtifact({
     title: '拟发送内容',
     kind: 'draft',

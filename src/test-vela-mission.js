@@ -55,6 +55,32 @@ try {
   assert(browserAdapterLiveRun.reviewCheck.evidence.at(-1).includes('example.com'), 'browser adapter review uses live evidence')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
+  const desktopCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开微信')[0]
+  assert(desktopCapability.id === 'desktop.app-control', 'capability registry routes desktop app tasks to desktop control')
+  assert(desktopCapability.riskClasses.includes('Screen'), 'desktop capability declares screen risk')
+  assert(desktopCapability.integrationStatus === 'adapter-ready', 'desktop capability is marked adapter-ready')
+  const desktopAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    title: '帮我打开微信',
+    plan: [{ id: 'inspect-context', label: '查看应用上下文', status: 'Active' }],
+    capabilityReferences: [desktopCapability],
+  })
+  assert(desktopAdapterPlan.toolCall.toolName === 'desktop.app-control.prepare', 'desktop adapter prepares a desktop tool call')
+  assert(!desktopAdapterPlan.permission, 'desktop adapter prototype does not request permission before mocked inspection')
+  assert(desktopAdapterPlan.artifact.summary.includes('不会真的打开应用'), 'desktop adapter plan states no real app action')
+  const desktopAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-desktop-adapter',
+    title: '帮我打开微信',
+    goal: '帮我打开微信',
+    plan: [{ id: 'inspect-context', label: '查看应用上下文', status: 'Active' }],
+    capabilityReferences: [desktopCapability],
+    toolCalls: [desktopAdapterPlan.toolCall],
+    artifacts: [desktopAdapterPlan.artifact],
+  })
+  assert(desktopAdapterRun.toolCall.toolName === 'desktop.app-control.inspect', 'desktop adapter records mocked desktop inspection')
+  assert(desktopAdapterRun.artifact.title === '桌面上下文摘要', 'desktop adapter creates desktop context artifact')
+  assert(desktopAdapterRun.reviewCheck.outcome === 'passed', 'desktop adapter review passes for mocked inspection')
+  assert(desktopAdapterRun.toolStages.some(item => item.toolName === 'desktop.open-app' && item.url === 'app://wechat'), 'desktop adapter records mocked app-open stage')
+  assert(desktopAdapterRun.toolStages.some(item => item.toolName === 'desktop.external-effect' && item.status === 'skipped'), 'desktop adapter records no hidden external effect')
 
   const seed = runtime.getCurrentMission()
   assert(seed.id === 'mission-vela-shell', 'seed mission is available before persistence')
@@ -549,6 +575,27 @@ try {
   assert(browserSubmitGate.permissions.at(-1).requestedBy === 'Vela Browser Adapter', 'browser submit permission records adapter requester')
   assert(browserSubmitGate.permissions.at(-1).toolCallId === browserSubmitGate.toolCalls.at(-1).id, 'browser submit permission links to tool call')
 
+  const desktopCommandMission = runtime.applyCurrentMissionCommand({
+    text: '帮我打开微信',
+    source: 'test-command',
+  })
+  assert(desktopCommandMission.capabilityReferences.some(item => item.id === 'desktop.app-control'), 'desktop command mission matches desktop capability')
+  const desktopCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(desktopCommandRunning.state === 'Running', 'desktop command enters running state')
+  assert(desktopCommandRunning.toolCalls.at(-1).toolName === 'desktop.app-control.prepare', 'desktop command records desktop prepare tool call')
+  assert(desktopCommandRunning.artifacts.at(-1).title === '桌面执行方案', 'desktop command creates desktop execution plan artifact')
+  const desktopCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(desktopCommandReviewing.state === 'Reviewing', 'desktop command moves to reviewing after mocked inspection')
+  assert(desktopCommandReviewing.toolCalls.at(-1).toolName === 'desktop.app-control.inspect', 'desktop command records desktop inspect execution')
+  assert(desktopCommandReviewing.artifacts.at(-1).title === '桌面上下文摘要', 'desktop command creates desktop context artifact')
+  assert(desktopCommandReviewing.reviewChecks.at(-1).title === '桌面上下文复核', 'desktop command creates desktop review check')
+  assert(desktopCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'desktop command review check passes')
+  const desktopInspectToolId = desktopCommandReviewing.toolCalls.at(-1).id
+  const desktopStages = desktopCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === desktopInspectToolId)
+  assert(desktopStages.some(item => item.toolName === 'desktop.open-app' && item.url === 'app://wechat'), 'desktop command records mocked app-open stage')
+  assert(desktopStages.some(item => item.toolName === 'desktop.screen-context' && item.url === 'screen://mock/current-app'), 'desktop command records mocked screen-context stage')
+  assert(desktopStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'desktop command records skipped external-effect stage')
+
   const assistantMessageMission = runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
@@ -560,6 +607,7 @@ try {
   assert(assistantMessageMission.agentActions.at(-1).title === '准备处理外部消息', 'external message mission records backstage operator action')
   assert(assistantMessageMission.agentActions.at(-1).requiresReview === false, 'external message mission does not expose review as the first-screen action')
   assert(assistantMessageMission.capabilityReferences.some(item => item.id === 'messages.outbound'), 'external message mission matches outbound message capability')
+  assert(assistantMessageMission.capabilityReferences.some(item => item.id === 'desktop.app-control'), 'external message mission also matches desktop context capability')
   assert(assistantMessageMission.capabilityReferences.some(item => item.riskClasses.includes('External message')), 'external message capability declares send risk')
   const assistantDraft = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(assistantDraft.state === 'Waiting for permission', 'external message continue waits for send confirmation')
@@ -570,6 +618,13 @@ try {
   assert(assistantDraft.permissions.at(-1).risk === 'External message', 'external message draft records external-message risk')
   assert(assistantDraft.permissions.at(-1).summary.includes('我准备这样回'), 'external message permission carries the proposed reply')
   assert(assistantDraft.agentActions.at(-1).title === '草拟待确认回复', 'external message continue records the draft action')
+  assert(assistantDraft.toolCalls.some(item => item.toolName === 'desktop.app-control.inspect'), 'external message continue records desktop context inspection')
+  assert(assistantDraft.artifacts.some(item => item.title === '微信上下文摘要'), 'external message continue creates desktop context artifact')
+  assert(assistantDraft.reviewChecks.some(item => item.title === '桌面上下文复核' && item.outcome === 'passed'), 'external message desktop context is reviewed')
+  const assistantDesktopTool = assistantDraft.toolCalls.find(item => item.toolName === 'desktop.app-control.inspect')
+  const assistantDesktopStages = assistantDraft.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === assistantDesktopTool?.id)
+  assert(assistantDesktopStages.some(item => item.toolName === 'desktop.open-app' && item.url === 'app://wechat'), 'external message records mocked WeChat open stage')
+  assert(assistantDesktopStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'external message records no hidden send stage')
   const assistantDraftApproved = runtime.applyCurrentMissionCommand({ text: '可以', source: 'test-command' })
   assert(assistantDraftApproved.state === 'Running', 'external message approval resumes the mission')
   assert(assistantDraftApproved.permissions.at(-1).decision === 'approved', 'external message approval resolves the pending send confirmation')

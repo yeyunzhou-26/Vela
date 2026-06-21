@@ -100,8 +100,8 @@ export const OPEN_CAPABILITY_REGISTRY = [
         licensePolicy: 'internal',
       },
     ],
-    integrationStatus: 'planned',
-    evaluation: 'Add desktop adapter smoke with mocked app open, screen context, and no hidden send action.',
+    integrationStatus: 'adapter-ready',
+    evaluation: 'test:vela-mission covers mocked app open, screen context, and no hidden send action.',
   },
   {
     id: 'files.document-work',
