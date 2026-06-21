@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { paths } from '../paths.js'
-import { executeCapabilityAdapterRun, planCapabilityAdapterRun } from './capability-adapters.js'
+import { executeCapabilityAdapterRun, planCapabilityAdapterRun, prepareCapabilityAdapterResult } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 
 export const MISSION_STATES = [
@@ -1730,6 +1730,20 @@ export function applyCurrentMissionCommand(input = {}) {
       ? REVIEWING_MISSION_NEXT_STEP
       : current.nextStep,
   })
+}
+
+export async function applyCurrentMissionCommandWithAdapters(input = {}) {
+  const text = asText(input.text || input.command || input.content)
+  let capabilityAdapterResult = input.capabilityAdapterResult || null
+  if (!capabilityAdapterResult && COMMAND_CONTINUE_RE.test(text)) {
+    const current = getCurrentMission()
+    if (current.state === 'Running') {
+      capabilityAdapterResult = await prepareCapabilityAdapterResult(current, input, input.capabilityAdapterDeps || {})
+    }
+  }
+  return applyCurrentMissionCommand(capabilityAdapterResult
+    ? { ...input, capabilityAdapterResult }
+    : input)
 }
 
 export function applyCurrentMissionVoiceIntent(input = {}) {

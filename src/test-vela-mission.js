@@ -24,6 +24,8 @@ try {
   const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
   assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
   assert(browserCapability.riskClasses.includes('Network'), 'browser capability declares network risk')
+  const urlCapability = capabilityRegistry.findOpenCapabilitiesForText('总结 https://example.com/vela')[0]
+  assert(urlCapability.id === 'browser.web-agent', 'capability registry routes bare URLs to browser agent')
   const browserAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
     title: '帮我打开网页搜索资料并总结',
     plan: [{ id: 'execute-review', label: '执行并复核', status: 'Active' }],
@@ -31,6 +33,26 @@ try {
   })
   assert(browserAdapterPlan.toolCall.toolName === 'browser.web-agent.prepare', 'browser adapter prepares a browser tool call')
   assert(!browserAdapterPlan.permission, 'browser read adapter does not request permission for read-only browsing')
+  const browserAdapterLiveRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-live-browser',
+    title: '帮我搜索 Vela 浏览器能力',
+    goal: '帮我搜索 Vela 浏览器能力',
+    plan: [{ id: 'execute-review', label: '执行并复核', status: 'Active' }],
+    capabilityReferences: [browserCapability],
+    toolCalls: [browserAdapterPlan.toolCall],
+    artifacts: [browserAdapterPlan.artifact],
+  }, {
+    capabilityAdapterResult: {
+      kind: 'browser-read-result',
+      ok: true,
+      sourceTools: ['web_search', 'fetch_url'],
+      summary: '已围绕「Vela 浏览器能力」完成网页搜索和读取。',
+      evidence: ['搜索查询：Vela 浏览器能力', 'Capability Map：https://example.com/capability（direct）'],
+    },
+  })
+  assert(browserAdapterLiveRun.toolCall.result.includes('web_search + fetch_url'), 'browser adapter result records live web tools')
+  assert(browserAdapterLiveRun.artifact.summary.includes('网页搜索和读取'), 'browser adapter artifact uses live web summary')
+  assert(browserAdapterLiveRun.reviewCheck.evidence.at(-1).includes('example.com'), 'browser adapter review uses live evidence')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
 
@@ -425,6 +447,33 @@ try {
   assert(browserCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'browser command review check passes')
   assert(browserCommandReviewing.reviewChecks.at(-1).toolCallId === browserCommandReviewing.toolCalls.at(-1).id, 'browser review check links executed tool call')
   assert(browserCommandReviewing.reviewChecks.at(-1).artifactId === browserCommandReviewing.artifacts.at(-1).id, 'browser review check links result artifact')
+
+  const liveBrowserCommandMission = runtime.applyCurrentMissionCommand({
+    text: '帮我打开网页总结 https://example.com/vela',
+    source: 'test-command',
+  })
+  assert(liveBrowserCommandMission.capabilityReferences.some(item => item.id === 'browser.web-agent'), 'live browser command matches browser capability')
+  const liveBrowserRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(liveBrowserRunning.state === 'Running', 'live browser command enters running state')
+  const liveBrowserReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchUrl: async (args) => JSON.stringify({
+        ok: true,
+        tool: 'fetch_url',
+        url: args.url,
+        fetch_source: 'direct',
+        title: 'Vela Live Browser Source',
+        content: 'Live browser adapter results flow through the async command wrapper into mission artifacts.',
+        content_length: 91,
+      }),
+    },
+  })
+  assert(liveBrowserReviewing.state === 'Reviewing', 'async browser command moves to reviewing')
+  assert(liveBrowserReviewing.toolCalls.at(-1).result.includes('fetch_url'), 'async browser command records live fetch tool')
+  assert(liveBrowserReviewing.artifacts.at(-1).summary.includes('Vela Live Browser Source'), 'async browser command writes live source summary')
+  assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('example.com/vela')), 'async browser command review keeps source evidence')
 
   const browserSubmitMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页填写表单并提交',

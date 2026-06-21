@@ -25,6 +25,7 @@
     "test:agent-skills": "node ./src/test-agent-skills.js",
     "test:config-upgrade": "node ./src/test-config-upgrade.js",
     "test:vela-mission": "node ./src/test-vela-mission.js",
+    "test:vela-web-reader": "node ./src/test-vela-web-reader.js",
     "repair:memories:dry": "electron ./scripts/repair-memory-quality.js",
     "repair:memories": "electron ./scripts/repair-memory-quality.js --apply",
     "probe:config-upgrade": "node ./scripts/probe-config-upgrade.mjs",
@@ -42,7 +43,7 @@
     "eval:vela-product-contract": "node scripts/eval-vela-product-contract.mjs",
     "eval:vela-review-slices": "node scripts/eval-vela-review-slices.mjs",
     "eval:vela-polish-readiness": "node scripts/eval-vela-polish-readiness.mjs",
-    "check:vela": "npm run test:vela-mission && npm run smoke:vela-shell && npm run smoke:vela-entry && npm run smoke:vela-packaged && npm run eval:vela-golden-trace && npm run eval:vela-memory-recall && npm run eval:vela-tool-permission && npm run eval:vela-voice-latency && npm run eval:vela-review-claim && npm run eval:vela-product-contract && npm run eval:vela-review-slices && npm run eval:vela-polish-readiness"
+    "check:vela": "npm run test:vela-mission && npm run test:vela-web-reader && npm run smoke:vela-shell && npm run smoke:vela-entry && npm run smoke:vela-packaged && npm run eval:vela-golden-trace && npm run eval:vela-memory-recall && npm run eval:vela-tool-permission && npm run eval:vela-voice-latency && npm run eval:vela-review-claim && npm run eval:vela-product-contract && npm run eval:vela-review-slices && npm run eval:vela-polish-readiness"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

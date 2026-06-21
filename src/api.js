@@ -38,6 +38,7 @@ import {
   appendCurrentMissionToolCall,
   appendCurrentMissionTrace,
   applyCurrentMissionCommand,
+  applyCurrentMissionCommandWithAdapters,
   applyCurrentMissionVoiceIntent,
   getCurrentMission,
   listMissions,
@@ -426,7 +427,7 @@ export function startAPI(port = 3721, { getStateSnapshot = null, onActivated = n
     if (req.method === 'POST' && url.pathname === '/vela/mission/commands') {
       try {
         const body = await readJsonBody(req)
-        jsonResponse(res, 200, { ok: true, mission: applyCurrentMissionCommand(body) })
+        jsonResponse(res, 200, { ok: true, mission: await applyCurrentMissionCommandWithAdapters(body) })
       } catch (err) {
         missionRuntimeErrorResponse(res, err)
       }
@@ -686,9 +687,20 @@ export function startAPI(port = 3721, { getStateSnapshot = null, onActivated = n
 
     // GET /status
     if (req.method === 'GET' && url.pathname === '/status') {
-      const db = getDB()
-      const { n } = db.prepare('SELECT COUNT(*) as n FROM memories').get()
-      jsonResponse(res, 200, { ok: true, memory_count: n, running: isRunning() })
+      try {
+        const db = getDB()
+        const { n } = db.prepare('SELECT COUNT(*) as n FROM memories').get()
+        jsonResponse(res, 200, { ok: true, memory_count: n, running: isRunning() })
+      } catch (err) {
+        jsonResponse(res, 200, {
+          ok: true,
+          degraded: true,
+          memory_count: null,
+          running: isRunning(),
+          warning: 'database_unavailable',
+          detail: err?.code || err?.message || 'unknown database error',
+        })
+      }
       return
     }
 

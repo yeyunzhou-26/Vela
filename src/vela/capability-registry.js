@@ -1,4 +1,5 @@
 const CAPABILITY_MATCH_LIMIT = 4
+const WEB_URL_RE = /https?:\/\/[^\s，。；、）)]+|(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s，。；、）)]*)?/i
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
@@ -201,7 +202,8 @@ export function findOpenCapabilitiesForText(value, options = {}) {
   const matches = OPEN_CAPABILITY_REGISTRY
     .map(capability => {
       const triggerHits = capability.triggers.filter(trigger => hasAny(text, [trigger]))
-      const score = triggerHits.length
+      const urlHit = capability.id === 'browser.web-agent' && WEB_URL_RE.test(text)
+      const score = triggerHits.length + (urlHit ? 1 : 0)
       return { capability, triggerHits, score }
     })
     .filter(item => item.score > 0)

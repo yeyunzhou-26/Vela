@@ -38,6 +38,22 @@ function isLikelyApiUrl(url) {
     || /\/(rest|graphql)\//.test(u)
 }
 
+function isLocalOrPrivateUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === 'localhost'
+      || host === '127.0.0.1'
+      || host === '0.0.0.0'
+      || host === '::1'
+      || host.startsWith('127.')
+      || host.startsWith('10.')
+      || host.startsWith('192.168.')
+      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+  } catch {
+    return false
+  }
+}
+
 // fetch_url 策略一：Jina Reader（r.jina.ai）
 // 服务端 Chromium 渲染 + Mozilla Readability，免费无需 key，支持 JS 页面
 async function fetchViaJina(url, signal) {
@@ -167,7 +183,7 @@ export async function execFetchUrl(args, context = {}) {
   let httpStatus = null
   let isJson = false
 
-  if (isLikelyApiUrl(url)) {
+  if (isLikelyApiUrl(url) || isLocalOrPrivateUrl(url)) {
     // JSON/API 端点：直连优先（Jina 会把 JSON 当网页渲染，慢且破坏结构）
     const directResult = await fetchViaDirect(url, context.signal, { expectJson: true })
     if (directResult.ok) {

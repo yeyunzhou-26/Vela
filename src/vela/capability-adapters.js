@@ -51,6 +51,13 @@ function hasBrowserResultForPrepare(mission = {}, prepareToolId = '') {
   ))
 }
 
+function shouldExecuteBrowserAdapter(mission = {}) {
+  const capability = primaryCapability(mission)
+  if (capability?.id !== 'browser.web-agent') return false
+  const prepareTool = latestBrowserPrepareTool(mission)
+  return !!prepareTool && !hasBrowserResultForPrepare(mission, prepareTool.id)
+}
+
 function browserRiskForMission(mission = {}, input = {}) {
   const text = missionText(mission, input)
   if (/(?:密码|密钥|凭证|验证码|登录|login|password|credential|captcha|otp)/i.test(text)) {
@@ -127,6 +134,21 @@ function browserExecutionSummary(mission = {}) {
   return `已围绕「${goal}」完成浏览器读取执行闭环：确认检索意图、提取目标和安全边界，形成可复核摘要；当前结果不包含外部发送、表单提交或登录凭据操作。`
 }
 
+function normalizeBrowserReadResult(value) {
+  if (!value || typeof value !== 'object') return null
+  if (value.kind !== 'browser-read-result') return null
+  return {
+    ...value,
+    ok: value.ok !== false,
+    summary: asText(value.summary),
+    evidence: normalizeArray(value.evidence).map(item => asText(item)).filter(Boolean),
+    sourceTools: normalizeArray(value.sourceTools).map(item => asText(item)).filter(Boolean),
+    failures: normalizeArray(value.failures),
+    pages: normalizeArray(value.pages),
+    urls: normalizeArray(value.urls).map(item => asText(item)).filter(Boolean),
+  }
+}
+
 function executeBrowserAdapterRun(mission = {}, input = {}) {
   const capability = primaryCapability(mission)
   if (capability?.id !== 'browser.web-agent') return null
@@ -137,22 +159,30 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
   const planStepId = activePlanStepId(mission.plan)
   const toolCallId = makeAdapterToolId('browser.web-agent.read')
   const artifactId = makeAdapterResultId('browser.web-agent')
-  const summary = browserExecutionSummary(mission)
+  const readResult = normalizeBrowserReadResult(input.capabilityAdapterResult)
+  const ok = readResult ? readResult.ok : true
+  const summary = readResult?.summary || browserExecutionSummary(mission)
   const artifactUri = `vela://capabilities/browser.web-agent/results/${prepareTool.id}`
+  const sourceTools = readResult?.sourceTools?.length
+    ? `；底层工具：${readResult.sourceTools.join(' + ')}`
+    : ''
+  const resultPrefix = readResult
+    ? (ok ? '浏览器读取完成' : '浏览器读取未完成')
+    : '浏览器读取执行闭环完成'
   return {
     capability,
     toolCall: {
       id: toolCallId,
       toolName: 'browser.web-agent.read',
       role: 'Operator',
-      status: 'ok',
+      status: ok ? 'ok' : 'failed',
       planStepId,
       risk: 'Read',
-      result: summary,
+      result: `${resultPrefix}${sourceTools}。${summary}`,
     },
     artifact: {
       id: artifactId,
-      title: '浏览器结果摘要',
+      title: ok ? '浏览器结果摘要' : '浏览器读取失败',
       kind: 'browser-summary',
       uri: artifactUri,
       summary,
@@ -161,23 +191,40 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
     reviewCheck: {
       key: `browser-result-${asText(mission.id, 'mission')}`,
       title: '浏览器结果复核',
-      outcome: 'passed',
+      outcome: ok ? 'passed' : 'failed',
       reviewer: 'Vela Browser Reviewer',
       role: 'Reviewer',
       planStepId,
       toolCallId,
       artifactId,
-      summary: '浏览器读取结果已经连接到工具调用、产物和任务计划，可进入用户确认。',
-      evidence: [
-        summary,
-        `准备工具调用：${prepareTool.id}`,
-        '未执行外部提交、消息发送、购买或登录凭据操作。',
-      ],
+      summary: ok
+        ? '浏览器读取结果已经连接到工具调用、产物和任务计划，可进入用户确认。'
+        : '浏览器读取没有拿到可用内容，已保留失败证据并等待调整。',
+      evidence: readResult?.evidence?.length
+        ? readResult.evidence
+        : [
+            summary,
+            `准备工具调用：${prepareTool.id}`,
+            '未执行外部提交、消息发送、购买或登录凭据操作。',
+          ],
+      failures: ok ? [] : normalizeArray(readResult?.failures).map(item => asText(item.reason || item.error || item.url)).filter(Boolean),
     },
-    nextStep: '浏览器结果摘要已准备好；你可以查看产物，确认后说“通过”或“完成”。',
+    nextStep: ok
+      ? '浏览器结果摘要已准备好；你可以查看产物，确认后说“通过”或“完成”。'
+      : '浏览器读取没有成功；你可以换一个网址、补充关键词，或让我继续调整。',
   }
 }
 
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
   return executeBrowserAdapterRun(mission, input)
+}
+
+export function shouldPrepareCapabilityAdapterResult(mission = {}) {
+  return shouldExecuteBrowserAdapter(mission)
+}
+
+export async function prepareCapabilityAdapterResult(mission = {}, input = {}, deps = {}) {
+  if (!shouldPrepareCapabilityAdapterResult(mission)) return null
+  const { readBrowserMission } = await import('./web-reader.js')
+  return readBrowserMission({ mission, input, ...deps })
 }
