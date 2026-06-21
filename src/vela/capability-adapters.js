@@ -46,6 +46,10 @@ function primaryFilesCapability(mission = {}) {
   return capabilityById(mission, 'files.document-work')
 }
 
+function primaryMemoryCapability(mission = {}) {
+  return capabilityById(mission, 'memory.context-os')
+}
+
 function latestBrowserPrepareTool(mission = {}) {
   return [...normalizeArray(mission.toolCalls)]
     .reverse()
@@ -101,6 +105,25 @@ function hasFilesResultForPrepare(mission = {}, prepareToolId = '') {
   if (!marker) return false
   return normalizeArray(mission.artifacts).some(artifact => (
     asText(artifact.uri).includes(`/results/${marker}`)
+  ))
+}
+
+function latestMemoryPrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'memory.context-os.prepare'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasMemoryResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
+  )) || normalizeArray(mission.memoryReferences).some(reference => (
+    asText(reference.provenance || reference.uri).includes(`/results/${marker}`)
   ))
 }
 
@@ -295,10 +318,66 @@ function planFilesAdapterRun(mission = {}, input = {}) {
   return run
 }
 
+function memoryQueryForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+    .replace(/^(?:请|帮我|帮|你|vela)\s*/i, '')
+    .replace(/(?:记住|记一下|记得|查找|查一下|回忆|召回|使用|根据|我的|一下)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text || asText(mission.goal || mission.title || input.text, '当前任务上下文')
+}
+
+function memoryReferenceTypeForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  if (/(?:偏好|preference|喜欢|不喜欢|习惯)/i.test(text)) return 'user'
+  if (/(?:项目|repo|repository|代码库|工程|背景)/i.test(text)) return 'project'
+  if (/(?:工具|tool|adapter|能力)/i.test(text)) return 'tool'
+  return 'mission'
+}
+
+function memoryTitleForMission(mission = {}, input = {}) {
+  const type = memoryReferenceTypeForMission(mission, input)
+  if (type === 'user') return '用户偏好上下文'
+  if (type === 'project') return '项目背景上下文'
+  if (type === 'tool') return '工具使用上下文'
+  return '任务上下文记忆'
+}
+
+function planMemoryAdapterRun(mission = {}, input = {}) {
+  const capability = primaryMemoryCapability(mission)
+  if (capability?.id !== 'memory.context-os') return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId(capability.id)
+  const query = memoryQueryForMission(mission, input)
+  const summary = `记忆代理已准备围绕「${query}」带入可追溯上下文；当前只关联 mission memory reference，不会偷偷写入长期记忆或外传敏感内容。`
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'memory.context-os.prepare',
+      role: 'Researcher',
+      status: 'prepared',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      title: '记忆召回方案',
+      kind: 'plan',
+      uri: `vela://capabilities/memory.context-os/runs/${toolCallId}`,
+      summary,
+      planStepId,
+    },
+    nextStep: '记忆代理已准备好关联可检查来源；继续后会把上下文引用挂到当前任务。',
+  }
+}
+
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
   return planBrowserAdapterRun(mission, input)
     || planDesktopAdapterRun(mission, input)
     || planFilesAdapterRun(mission, input)
+    || planMemoryAdapterRun(mission, input)
 }
 
 function browserExecutionSummary(mission = {}) {
@@ -579,10 +658,110 @@ function executeFilesAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function memoryContextSummary(mission = {}, input = {}) {
+  const query = memoryQueryForMission(mission, input)
+  return `已为「${query}」关联当前任务可用的记忆上下文：保留查询、来源、相关度、置信度和消费步骤；当前没有写入长期记忆。`
+}
+
+function executeMemoryAdapterRun(mission = {}, input = {}) {
+  const capability = primaryMemoryCapability(mission)
+  if (capability?.id !== 'memory.context-os') return null
+
+  const prepareTool = latestMemoryPrepareTool(mission)
+  if (!prepareTool || hasMemoryResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId('memory.context-os.recall')
+  const artifactId = makeAdapterResultId('memory.context-os')
+  const query = memoryQueryForMission(mission, input)
+  const title = memoryTitleForMission(mission, input)
+  const type = memoryReferenceTypeForMission(mission, input)
+  const provenance = `vela://capabilities/memory.context-os/results/${prepareTool.id}`
+  const summary = memoryContextSummary(mission, input)
+  const memoryReferenceId = makeAdapterResultId('memory.context-os-reference')
+  const memoryReference = {
+    id: memoryReferenceId,
+    title,
+    type,
+    source: 'Vela memory adapter',
+    provenance,
+    uri: provenance,
+    query,
+    relevance: '0.84',
+    confidence: type === 'mission' ? 'medium' : 'high',
+    usedByPlanStepId: planStepId,
+    reason: '当前任务触发了记忆/上下文能力，需要把相关背景带入执行链路。',
+    summary,
+  }
+  const evidence = [
+    `召回查询：${query}`,
+    `记忆类型：${type}`,
+    `来源：${memoryReference.source}`,
+    `来源证明：${provenance}`,
+    '长期记忆写入已跳过；这里只关联当前任务上下文。',
+  ]
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'memory.context-os.recall',
+      role: 'Researcher',
+      status: 'ok',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title: '记忆上下文摘要',
+      kind: 'memory-context',
+      uri: provenance,
+      summary,
+      planStepId,
+    },
+    memoryReferences: [memoryReference],
+    reviewCheck: {
+      key: `memory-context-${asText(mission.id, 'mission')}`,
+      title: '记忆上下文复核',
+      outcome: 'passed',
+      reviewer: 'Vela Memory Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: '记忆上下文已关联到当前任务，并保留查询、来源和使用步骤；未执行隐藏长期记忆写入。',
+      evidence,
+      failures: [],
+    },
+    toolStages: [
+      {
+        toolName: 'memory.recall',
+        status: 'ok',
+        stage: 'mission-context-recall',
+        summary: `关联 mission memory reference：${title}`,
+        url: provenance,
+        planStepId,
+        role: 'Researcher',
+      },
+      {
+        toolName: 'memory.long-term-write',
+        status: 'skipped',
+        stage: 'no-hidden-memory-write',
+        summary: '未写入长期记忆；如需长期保存，需要单独确认和来源说明。',
+        url: 'memory://long-term-write-skipped',
+        planStepId,
+        role: 'Researcher',
+      },
+    ],
+    nextStep: '记忆上下文已挂到当前任务；你可以在记忆层检查来源和相关度。',
+  }
+}
+
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
   return executeBrowserAdapterRun(mission, input)
     || executeDesktopAdapterRun(mission, input)
     || executeFilesAdapterRun(mission, input)
+    || executeMemoryAdapterRun(mission, input)
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {

@@ -110,6 +110,31 @@ try {
     capabilityReferences: [filesCapability],
   })
   assert(filesWritePlan.permission?.risk === 'Write', 'files adapter gates local disk write')
+  const memoryCapability = capabilityRegistry.findOpenCapabilitiesForText('记住我的偏好：我喜欢中文界面')[0]
+  assert(memoryCapability.id === 'memory.context-os', 'capability registry routes memory tasks to context os')
+  assert(memoryCapability.integrationStatus === 'adapter-ready', 'memory capability is marked adapter-ready')
+  const memoryAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    title: '记住我的偏好：我喜欢中文界面',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [memoryCapability],
+  })
+  assert(memoryAdapterPlan.toolCall.toolName === 'memory.context-os.prepare', 'memory adapter prepares context recall')
+  assert(!memoryAdapterPlan.permission, 'memory adapter does not request permission for mission-scoped context')
+  const memoryAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-memory-adapter',
+    title: '记住我的偏好：我喜欢中文界面',
+    goal: '记住我的偏好：我喜欢中文界面',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [memoryCapability],
+    toolCalls: [memoryAdapterPlan.toolCall],
+    artifacts: [memoryAdapterPlan.artifact],
+  })
+  assert(memoryAdapterRun.toolCall.toolName === 'memory.context-os.recall', 'memory adapter records context recall')
+  assert(memoryAdapterRun.artifact.kind === 'memory-context', 'memory adapter creates memory context artifact')
+  assert(memoryAdapterRun.memoryReferences.at(-1).type === 'user', 'memory adapter creates user memory reference')
+  assert(memoryAdapterRun.memoryReferences.at(-1).provenance.includes('/results/'), 'memory adapter records provenance')
+  assert(memoryAdapterRun.reviewCheck.title === '记忆上下文复核', 'memory adapter creates memory review')
+  assert(memoryAdapterRun.toolStages.some(item => item.toolName === 'memory.long-term-write' && item.status === 'skipped'), 'memory adapter skips hidden long-term write')
 
   const seed = runtime.getCurrentMission()
   assert(seed.id === 'mission-vela-shell', 'seed mission is available before persistence')
@@ -635,6 +660,29 @@ try {
   assert(filesWriteGate.toolCalls.at(-1).status === 'needs-permission', 'files write command records permission need')
   assert(filesWriteGate.permissions.at(-1).requestedBy === 'Vela File Adapter', 'files write permission records adapter requester')
   assert(filesWriteGate.permissions.at(-1).risk === 'Write', 'files write permission records write risk')
+
+  const memoryCommandMission = runtime.applyCurrentMissionCommand({
+    text: '记住我的偏好：我喜欢中文界面',
+    source: 'test-command',
+  })
+  assert(memoryCommandMission.capabilityReferences.some(item => item.id === 'memory.context-os'), 'memory command mission matches memory capability')
+  const memoryCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(memoryCommandRunning.state === 'Running', 'memory command enters running state')
+  assert(memoryCommandRunning.toolCalls.at(-1).toolName === 'memory.context-os.prepare', 'memory command records memory prepare tool call')
+  assert(memoryCommandRunning.artifacts.at(-1).title === '记忆召回方案', 'memory command creates recall plan artifact')
+  const memoryCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(memoryCommandReviewing.state === 'Reviewing', 'memory command moves to reviewing after context recall')
+  assert(memoryCommandReviewing.toolCalls.at(-1).toolName === 'memory.context-os.recall', 'memory command records memory recall')
+  assert(memoryCommandReviewing.artifacts.at(-1).kind === 'memory-context', 'memory command creates memory context artifact')
+  assert(memoryCommandReviewing.memoryReferences.at(-1).title === '用户偏好上下文', 'memory command attaches user preference memory')
+  assert(memoryCommandReviewing.memoryReferences.at(-1).provenance.includes('memory.context-os'), 'memory command keeps memory provenance')
+  assert(memoryCommandReviewing.trace.some(item => item.type === 'memory.reference' && item.memoryReferenceId === memoryCommandReviewing.memoryReferences.at(-1).id), 'memory command records memory reference trace')
+  assert(memoryCommandReviewing.reviewChecks.at(-1).title === '记忆上下文复核', 'memory command creates memory review check')
+  assert(memoryCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'memory command review passes')
+  const memoryRecallToolId = memoryCommandReviewing.toolCalls.at(-1).id
+  const memoryStages = memoryCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === memoryRecallToolId)
+  assert(memoryStages.some(item => item.toolName === 'memory.recall' && item.result === 'ok'), 'memory command records recall stage')
+  assert(memoryStages.some(item => item.toolName === 'memory.long-term-write' && item.result === 'skipped'), 'memory command records skipped long-term write')
 
   const desktopCommandMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开微信',
