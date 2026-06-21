@@ -276,7 +276,7 @@ input {
   gap: 14px;
   min-width: 0;
   min-height: 0;
-  padding: 18px 22px 104px;
+  padding: 18px 22px 156px;
 }
 
 .mission-switcher,
@@ -1454,7 +1454,7 @@ input {
 
   .mission-workspace {
     grid-column: 2;
-    padding: 14px 14px 176px;
+    padding: 14px 14px 220px;
   }
 
   .intelligence-spine {

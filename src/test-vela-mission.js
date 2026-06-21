@@ -416,6 +416,15 @@ try {
   assert(browserCommandRunning.toolCalls.at(-1).toolName === 'browser.web-agent.prepare', 'browser command records browser adapter tool call')
   assert(browserCommandRunning.toolCalls.at(-1).status === 'prepared', 'browser command tool call is prepared')
   assert(browserCommandRunning.artifacts.at(-1).title === '浏览器执行方案', 'browser command creates browser execution plan artifact')
+  const browserCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(browserCommandReviewing.state === 'Reviewing', 'browser command moves to reviewing after adapter execution')
+  assert(browserCommandReviewing.toolCalls.at(-1).toolName === 'browser.web-agent.read', 'browser command records browser read execution')
+  assert(browserCommandReviewing.toolCalls.at(-1).status === 'ok', 'browser read execution succeeds')
+  assert(browserCommandReviewing.artifacts.at(-1).title === '浏览器结果摘要', 'browser command creates browser result artifact')
+  assert(browserCommandReviewing.reviewChecks.at(-1).title === '浏览器结果复核', 'browser command creates browser review check')
+  assert(browserCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'browser command review check passes')
+  assert(browserCommandReviewing.reviewChecks.at(-1).toolCallId === browserCommandReviewing.toolCalls.at(-1).id, 'browser review check links executed tool call')
+  assert(browserCommandReviewing.reviewChecks.at(-1).artifactId === browserCommandReviewing.artifacts.at(-1).id, 'browser review check links result artifact')
 
   const browserSubmitMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页填写表单并提交',

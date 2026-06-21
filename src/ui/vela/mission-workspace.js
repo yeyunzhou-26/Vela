@@ -263,6 +263,9 @@ function assistantReplyForMission(mission = {}, attention = null) {
   if (mission.state === 'Complete') {
     return '这件事已经处理完了。'
   }
+  if (mission.state === 'Reviewing') {
+    return '结果已经准备好，我在等你确认。你可以查看产物，说“通过”或让我继续调整。'
+  }
   if (mission.state === 'Running') {
     return '我正在处理这件事。需要你决定的时候，我会只问关键问题。'
   }
@@ -274,6 +277,7 @@ function assistantStateLabel(mission = {}, attention = null) {
   if (attention?.kind === 'review') return '后台复核中'
   if (mission.state === 'Waiting for permission') return '等待你确认'
   if (mission.state === 'Running') return '正在处理'
+  if (mission.state === 'Reviewing') return '等待确认'
   if (mission.state === 'Complete') return '已完成'
   return '待命'
 }

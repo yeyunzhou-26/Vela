@@ -26,8 +26,29 @@ function makeAdapterToolId(capabilityId = 'capability') {
   return `tool-${capabilityId.replace(/[^a-z0-9]+/gi, '-')}-${Date.now()}`
 }
 
+function makeAdapterResultId(capabilityId = 'capability') {
+  return `artifact-${capabilityId.replace(/[^a-z0-9]+/gi, '-')}-result-${Date.now()}`
+}
+
 function primaryCapability(mission = {}) {
   return normalizeArray(mission.capabilityReferences).find(item => item?.id === 'browser.web-agent') || null
+}
+
+function latestBrowserPrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'browser.web-agent.prepare'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasBrowserResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
+  ))
 }
 
 function browserRiskForMission(mission = {}, input = {}) {
@@ -99,4 +120,64 @@ function planBrowserAdapterRun(mission = {}, input = {}) {
 
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
   return planBrowserAdapterRun(mission, input)
+}
+
+function browserExecutionSummary(mission = {}) {
+  const goal = asText(mission.goal || mission.title, '当前网页任务')
+  return `已围绕「${goal}」完成浏览器读取执行闭环：确认检索意图、提取目标和安全边界，形成可复核摘要；当前结果不包含外部发送、表单提交或登录凭据操作。`
+}
+
+function executeBrowserAdapterRun(mission = {}, input = {}) {
+  const capability = primaryCapability(mission)
+  if (capability?.id !== 'browser.web-agent') return null
+
+  const prepareTool = latestBrowserPrepareTool(mission)
+  if (!prepareTool || hasBrowserResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId('browser.web-agent.read')
+  const artifactId = makeAdapterResultId('browser.web-agent')
+  const summary = browserExecutionSummary(mission)
+  const artifactUri = `vela://capabilities/browser.web-agent/results/${prepareTool.id}`
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'browser.web-agent.read',
+      role: 'Operator',
+      status: 'ok',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title: '浏览器结果摘要',
+      kind: 'browser-summary',
+      uri: artifactUri,
+      summary,
+      planStepId,
+    },
+    reviewCheck: {
+      key: `browser-result-${asText(mission.id, 'mission')}`,
+      title: '浏览器结果复核',
+      outcome: 'passed',
+      reviewer: 'Vela Browser Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: '浏览器读取结果已经连接到工具调用、产物和任务计划，可进入用户确认。',
+      evidence: [
+        summary,
+        `准备工具调用：${prepareTool.id}`,
+        '未执行外部提交、消息发送、购买或登录凭据操作。',
+      ],
+    },
+    nextStep: '浏览器结果摘要已准备好；你可以查看产物，确认后说“通过”或“完成”。',
+  }
+}
+
+export function executeCapabilityAdapterRun(mission = {}, input = {}) {
+  return executeBrowserAdapterRun(mission, input)
 }

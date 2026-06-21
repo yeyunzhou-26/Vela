@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { paths } from '../paths.js'
-import { planCapabilityAdapterRun } from './capability-adapters.js'
+import { executeCapabilityAdapterRun, planCapabilityAdapterRun } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 
 export const MISSION_STATES = [
@@ -707,6 +707,9 @@ function advanceCurrentMissionByCommand(current = {}, nextState = '', input = {}
   if (previousState === 'Planned' && nextState === 'Running') {
     return applyCapabilityAdapterRun(next, input)
   }
+  if (previousState === 'Running' && nextState === 'Reviewing') {
+    return applyCapabilityAdapterExecution(next, input)
+  }
   return next
 }
 
@@ -717,6 +720,16 @@ function applyCapabilityAdapterRun(current = {}, input = {}) {
   if (run.artifact) appendCurrentMissionArtifact(run.artifact)
   if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })
   if (run.permission) return appendCurrentMissionPermission(run.permission)
+  return getCurrentMission()
+}
+
+function applyCapabilityAdapterExecution(current = {}, input = {}) {
+  const run = executeCapabilityAdapterRun(current, input)
+  if (!run) return current
+  appendCurrentMissionToolCall(run.toolCall)
+  if (run.artifact) appendCurrentMissionArtifact(run.artifact)
+  if (run.reviewCheck) appendCurrentMissionReviewCheck(run.reviewCheck)
+  if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })
   return getCurrentMission()
 }
 
