@@ -24,6 +24,7 @@ const slices = [
     files: [
       'src/vela/mission-runtime.js',
       'src/vela/capability-registry.js',
+      'src/vela/capability-adapters.js',
       'src/api.js',
       'src/test-vela-mission.js',
     ],

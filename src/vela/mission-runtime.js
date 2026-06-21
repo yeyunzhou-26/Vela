@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { paths } from '../paths.js'
+import { planCapabilityAdapterRun } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 
 export const MISSION_STATES = [
@@ -684,24 +685,39 @@ function advanceCurrentMissionByCommand(current = {}, nextState = '', input = {}
   const previousState = asText(current.state, '')
   const createdAt = new Date().toISOString()
   const action = makeCommandAdvanceAgentAction(current, previousState, nextState, createdAt)
-  const next = updateCurrentMission({
+  let next = updateCurrentMission({
     state: nextState,
     nextStep: commandNextStep(previousState, nextState, current.nextStep),
     plan: advancePlanForCommand(current.plan, previousState, nextState),
     agentActions: action ? [...normalizeArray(current.agentActions), action] : current.agentActions,
   })
-  if (!action) return next
-  return appendCurrentMissionTrace({
-    type: 'agent.action',
-    title: `${action.role}: ${action.title}`,
-    detail: action.summary || text,
-    planStepId: action.planStepId,
-    agentRole: action.role,
-    result: action.result || action.status,
-    reviewOutcome: action.requiresReview ? 'required' : '',
-    screenContext: input.screenContext,
-    createdAt: action.createdAt,
-  })
+  if (action) {
+    next = appendCurrentMissionTrace({
+      type: 'agent.action',
+      title: `${action.role}: ${action.title}`,
+      detail: action.summary || text,
+      planStepId: action.planStepId,
+      agentRole: action.role,
+      result: action.result || action.status,
+      reviewOutcome: action.requiresReview ? 'required' : '',
+      screenContext: input.screenContext,
+      createdAt: action.createdAt,
+    })
+  }
+  if (previousState === 'Planned' && nextState === 'Running') {
+    return applyCapabilityAdapterRun(next, input)
+  }
+  return next
+}
+
+function applyCapabilityAdapterRun(current = {}, input = {}) {
+  const run = planCapabilityAdapterRun(current, input)
+  if (!run) return current
+  appendCurrentMissionToolCall(run.toolCall)
+  if (run.artifact) appendCurrentMissionArtifact(run.artifact)
+  if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })
+  if (run.permission) return appendCurrentMissionPermission(run.permission)
+  return getCurrentMission()
 }
 
 function normalizeScreenContext(value = {}) {

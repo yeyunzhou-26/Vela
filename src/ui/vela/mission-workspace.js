@@ -1,26 +1,10 @@
 import { escapeHtml } from './dom-utils.js'
-import { zh, zhPrefix } from './locale.js'
+import { zh } from './locale.js'
 
 const WORKSPACE_MODES = [
   { id: 'plan', label: 'Plan' },
   { id: 'artifacts', label: 'Artifacts' },
 ]
-
-const NEXT_STATE = {
-  Draft: 'Planned',
-  Planned: 'Running',
-  Running: 'Reviewing',
-  'Waiting for user': 'Running',
-  'Waiting for permission': 'Running',
-  Blocked: 'Running',
-  Reviewing: 'Complete',
-  Failed: 'Running',
-  Complete: 'Running',
-}
-
-export function getNextMissionState(state) {
-  return NEXT_STATE[state] || 'Running'
-}
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -318,10 +302,6 @@ function renderAssistantProcess(plan, mission = {}) {
   `
 }
 
-function shouldContinueThroughCommand(mission = {}) {
-  return mission.state === 'Planned' && isExternalMessageMission(mission)
-}
-
 function renderPlanCanvas(mission, plan) {
   const input = latestInput(mission)
   const attention = missionAttention(mission)
@@ -454,11 +434,10 @@ function renderAttentionStrip(attention) {
   `
 }
 
-export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand, onAdvanceMission } = {}) {
+export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand } = {}) {
   const plan = Array.isArray(mission.plan) ? mission.plan : []
   const artifacts = asArray(mission.artifacts)
   const activeMode = workspaceMode === 'artifacts' ? 'artifacts' : 'plan'
-  const nextState = getNextMissionState(mission.state)
   const guardNotice = String(notice || '').trim()
   const attention = missionAttention(mission)
   const workspace = document.createElement('section')
@@ -488,7 +467,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
         <span class="caption">${escapeHtml(zh('Next step'))}</span>
         <strong>${escapeHtml(zh(mission.nextStep))}</strong>
       </div>
-      <button class="step-action" type="button" title="${escapeHtml(zhPrefix('Move to', zh(nextState)))}">${escapeHtml(zh('Continue'))}</button>
+      <button class="step-action" type="button" title="${escapeHtml(zh('Continue'))}">${escapeHtml(zh('Continue'))}</button>
     </div>
 
     ${guardNotice ? `
@@ -511,11 +490,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     if (input) input.value = ''
   })
   workspace.querySelector('.step-action')?.addEventListener('click', () => {
-    if (shouldContinueThroughCommand(mission)) {
-      Promise.resolve(onSubmitCommand?.('继续')).catch(() => {})
-      return
-    }
-    Promise.resolve(onAdvanceMission?.(nextState)).catch(() => {})
+    Promise.resolve(onSubmitCommand?.('继续')).catch(() => {})
   })
   for (const button of workspace.querySelectorAll('.workspace-mode-tab')) {
     button.addEventListener('click', () => {

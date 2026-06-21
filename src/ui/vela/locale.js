@@ -340,6 +340,8 @@ const ZH = {
   '记忆和上下文': '记忆和上下文',
   '系统级语音入口': '系统级语音入口',
   planned: '已规划',
+  prepared: '已准备',
+  'needs-permission': '需要许可',
   'adapter-ready': '适配器就绪',
   internal: '内部',
   'direct-eligible': '可直接复用候选',

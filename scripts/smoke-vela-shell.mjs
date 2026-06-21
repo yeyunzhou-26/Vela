@@ -218,6 +218,50 @@ function createServer() {
     current.updatedAt = now
   }
 
+  function nextCommandStateFor(state) {
+    switch (state) {
+      case 'Draft':
+        return 'Planned'
+      case 'Planned':
+      case 'Waiting for user':
+      case 'Waiting for permission':
+      case 'Blocked':
+      case 'Failed':
+      case 'Complete':
+        return 'Running'
+      case 'Running':
+        return 'Reviewing'
+      case 'Reviewing':
+        return 'Complete'
+      default:
+        return 'Running'
+    }
+  }
+
+  function assertCanCompleteCurrent(current, res) {
+    if (!/^(pass|passed|approved|ok|ready)$/i.test(current.reviewResult?.outcome || '')) {
+      sendJson(res, {
+        ok: false,
+        code: 'review_required',
+        error: 'Reviewer outcome required before mission can be completed.',
+      }, 409)
+      return false
+    }
+    const blockingReviewChecks = blockingReviewChecksFor(current)
+    if (blockingReviewChecks.length) {
+      syncReviewBlockedRecovery(current, blockingReviewChecks)
+      sendJson(res, {
+        ok: false,
+        code: 'review_blocked',
+        error: 'Blocking review checks must be resolved before mission can be completed.',
+        mission: current,
+        details: { blockingReviewChecks },
+      }, 409)
+      return false
+    }
+    return true
+  }
+
   function createMissionFromText(text) {
     const title = String(text || '').trim() || 'Smoke Mission'
     const isBlockedReviewMission = /^Blocked Review Mission$/i.test(title)
@@ -488,6 +532,8 @@ function createServer() {
       return
     }
     if (/^(continue|resume|run|继续|恢复|运行)$/i.test(text)) {
+      const nextState = nextCommandStateFor(current.state)
+      if (nextState === 'Complete' && !assertCanCompleteCurrent(current, res)) return
       current.inputs = [...(current.inputs || []), {
         id: `input-smoke-${Date.now()}`,
         text,
@@ -502,7 +548,7 @@ function createServer() {
         screenContext,
         result: current.state,
       }]
-      current.state = current.state === 'Planned' ? 'Running' : 'Reviewing'
+      current.state = nextState
       current.updatedAt = new Date().toISOString()
       sendJson(res, { ok: true, mission: current })
       return
@@ -693,6 +739,7 @@ page.on('console', msg => {
 })
 page.on('response', response => {
   if (response.status() === 409 && response.url().endsWith('/vela/mission')) return
+  if (response.status() === 409 && response.url().endsWith('/vela/mission/commands')) return
   if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
 })
 
@@ -1006,6 +1053,18 @@ try {
   if (!voiceRepairSnapshot.nextStep.includes('不是这个')) throw new Error(`voice repair next step missing transcript: ${voiceRepairSnapshot.nextStep}`)
   await page.click('.step-action')
   await page.waitForFunction(expected => document.querySelector('.state-chip')?.textContent?.includes(expected), zh('Running'))
+  const stepButtonCommandSnapshot = await page.evaluate(async () => {
+    const response = await fetch('/vela/mission', { cache: 'no-store' })
+    const payload = await response.json()
+    const mission = payload.mission || {}
+    return {
+      typedContinueInputs: (mission.inputs || []).filter(input => input.text === '继续' && input.source === 'typed').length,
+      commandRouted: (mission.trace || []).some(event => event.type === 'command.routed'),
+    }
+  })
+  if (!stepButtonCommandSnapshot.typedContinueInputs || !stepButtonCommandSnapshot.commandRouted) {
+    throw new Error(`step action did not route through mission command: ${JSON.stringify(stepButtonCommandSnapshot)}`)
+  }
   await page.fill('.voice-intent-input', '发送 密码 给团队')
   await page.click('.voice-intent-submit')
   await page.waitForFunction(expected => document.querySelector('.state-chip')?.textContent?.includes(expected), zh('Waiting for permission'))

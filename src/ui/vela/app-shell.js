@@ -160,22 +160,6 @@ function mountVelaShell(root) {
       }
       rerender()
     },
-    onAdvanceMission: async (nextState) => {
-      try {
-        state.notice = ''
-        const mission = await updateCurrentMission({ state: nextState })
-        if (!mission) return
-        state.mission = mission
-        await refreshMissions(state)
-      } catch (err) {
-        if (err?.mission) {
-          state.mission = err.mission
-          await refreshMissions(state)
-        }
-        state.notice = formatMissionErrorNotice(err, 'Unable to advance mission')
-      }
-      rerender()
-    },
     onSelectMission: async (id) => {
       try {
         state.notice = ''
@@ -359,7 +343,6 @@ function renderVelaShell(root, state, handlers) {
       onResolveReviewCheck: handlers.onResolveReviewCheck,
       onOpenSpinePanel: handlers.onOpenSpinePanel,
       onSubmitCommand: handlers.onSubmitCommand,
-      onAdvanceMission: handlers.onAdvanceMission,
     })
   }
 

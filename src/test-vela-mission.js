@@ -18,11 +18,19 @@ function assert(condition, label) {
 
 try {
   const runtime = await import('./vela/mission-runtime.js')
+  const capabilityAdapters = await import('./vela/capability-adapters.js')
   const capabilityRegistry = await import('./vela/capability-registry.js')
 
   const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
   assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
   assert(browserCapability.riskClasses.includes('Network'), 'browser capability declares network risk')
+  const browserAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    title: '帮我打开网页搜索资料并总结',
+    plan: [{ id: 'execute-review', label: '执行并复核', status: 'Active' }],
+    capabilityReferences: [browserCapability],
+  })
+  assert(browserAdapterPlan.toolCall.toolName === 'browser.web-agent.prepare', 'browser adapter prepares a browser tool call')
+  assert(!browserAdapterPlan.permission, 'browser read adapter does not request permission for read-only browsing')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
 
@@ -403,6 +411,22 @@ try {
   })
   assert(browserCommandMission.capabilityReferences.some(item => item.id === 'browser.web-agent'), 'browser command mission matches browser capability')
   assert(!browserCommandMission.capabilityReferences.some(item => item.id === 'voice.system-entry'), 'browser command mission does not match voice from default next-step copy')
+  const browserCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(browserCommandRunning.state === 'Running', 'browser command continues without permission for read-only browsing')
+  assert(browserCommandRunning.toolCalls.at(-1).toolName === 'browser.web-agent.prepare', 'browser command records browser adapter tool call')
+  assert(browserCommandRunning.toolCalls.at(-1).status === 'prepared', 'browser command tool call is prepared')
+  assert(browserCommandRunning.artifacts.at(-1).title === '浏览器执行方案', 'browser command creates browser execution plan artifact')
+
+  const browserSubmitMission = runtime.applyCurrentMissionCommand({
+    text: '帮我打开网页填写表单并提交',
+    source: 'test-command',
+  })
+  assert(browserSubmitMission.capabilityReferences.some(item => item.id === 'browser.web-agent'), 'browser submit mission matches browser capability')
+  const browserSubmitGate = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(browserSubmitGate.state === 'Waiting for permission', 'browser submit command waits for permission')
+  assert(browserSubmitGate.toolCalls.at(-1).status === 'needs-permission', 'browser submit tool call records permission need')
+  assert(browserSubmitGate.permissions.at(-1).requestedBy === 'Vela Browser Adapter', 'browser submit permission records adapter requester')
+  assert(browserSubmitGate.permissions.at(-1).toolCallId === browserSubmitGate.toolCalls.at(-1).id, 'browser submit permission links to tool call')
 
   const assistantMessageMission = runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
