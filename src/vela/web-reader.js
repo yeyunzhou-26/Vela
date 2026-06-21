@@ -1,8 +1,9 @@
-import { execFetchUrl, execWebSearch } from '../capabilities/tools/web.js'
+import { execBrowserRead, execFetchUrl, execWebSearch } from '../capabilities/tools/web.js'
 
 const MAX_FETCHED_SOURCES = 2
 const SUMMARY_EXCERPT_LENGTH = 420
 const WEB_TOOL_TIMEOUT_MS = 15000
+const BROWSER_READ_TIMEOUT_MS = 22000
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
@@ -110,31 +111,72 @@ function summarizePages({ query = '', mode = 'url', searchSource = '', pages = [
 }
 
 async function runWebSearch(webSearch, query, context) {
-  const raw = await withTimeout(webSearch({ query, limit: 4 }, context), WEB_TOOL_TIMEOUT_MS, 'web_search')
+  const raw = await withToolTimeout(
+    nextContext => webSearch({ query, limit: 4 }, nextContext),
+    context,
+    WEB_TOOL_TIMEOUT_MS,
+    'web_search',
+  )
   return safeJson(raw, { ok: false, tool: 'web_search', query, error: 'invalid search response' })
 }
 
 async function runFetchUrl(fetchUrl, url, context) {
-  const raw = await withTimeout(fetchUrl({
-    url,
-    max_chars: 2600,
-    timeout_ms: 20000,
-    no_browser_fallback: true,
-  }, context), WEB_TOOL_TIMEOUT_MS, 'fetch_url')
+  const raw = await withToolTimeout(
+    nextContext => fetchUrl({
+      url,
+      max_chars: 2600,
+      timeout_ms: 20000,
+      no_browser_fallback: true,
+    }, nextContext),
+    context,
+    WEB_TOOL_TIMEOUT_MS,
+    'fetch_url',
+  )
   return safeJson(raw, { ok: false, tool: 'fetch_url', url, error: 'invalid fetch response' })
 }
 
-async function withTimeout(promise, timeoutMs, label) {
+async function runBrowserRead(browserRead, url, context) {
+  const raw = await withToolTimeout(
+    nextContext => browserRead({
+      url,
+      max_chars: 3600,
+      timeout_ms: 18000,
+    }, nextContext),
+    context,
+    BROWSER_READ_TIMEOUT_MS,
+    'browser_read',
+  )
+  return safeJson(raw, { ok: false, tool: 'browser_read', url, error: 'invalid browser response' })
+}
+
+function abortSignal(parentSignal, controller) {
+  if (!parentSignal) return () => {}
+  const abort = () => controller.abort(parentSignal.reason || new Error('operation aborted'))
+  if (parentSignal.aborted) {
+    abort()
+    return () => {}
+  }
+  parentSignal.addEventListener?.('abort', abort, { once: true })
+  return () => parentSignal.removeEventListener?.('abort', abort)
+}
+
+async function withToolTimeout(run, context = {}, timeoutMs, label) {
+  const controller = new AbortController()
+  const cleanupAbort = abortSignal(context.signal, controller)
   let timer = null
   try {
     return await Promise.race([
-      promise,
+      run({ ...context, signal: controller.signal }),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+        timer = setTimeout(() => {
+          controller.abort(new Error(`${label} timed out after ${timeoutMs}ms`))
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
       }),
     ])
   } finally {
     if (timer) clearTimeout(timer)
+    cleanupAbort()
   }
 }
 
@@ -153,9 +195,28 @@ function compactPage(payload = {}, fallback = {}) {
   }
 }
 
-async function fetchReadablePages(urls = [], fetchUrl, context, fallbackResults = []) {
+function shouldEscalateToBrowserRead(payload = {}) {
+  const text = [
+    payload.error,
+    payload.hint,
+    payload.reason,
+    payload.status,
+  ].map(value => asText(value)).join(' ')
+  return /browser_read|javascript|render|crawler|no readable content|cloudflare|captcha|403|429|503|blocked|blocks/i.test(text)
+}
+
+function failureReason(payload = {}) {
+  return asText(payload.error || payload.hint || payload.status, '读取失败')
+}
+
+async function fetchReadablePages(urls = [], tools = {}, context, fallbackResults = []) {
+  const {
+    fetchUrl = execFetchUrl,
+    browserRead = execBrowserRead,
+  } = tools
   const pages = []
   const failures = []
+  const stages = []
   for (const url of unique(urls).slice(0, MAX_FETCHED_SOURCES)) {
     const fallback = fallbackResults.find(result => resultUrl(result) === url) || { url }
     let payload
@@ -169,15 +230,63 @@ async function fetchReadablePages(urls = [], fetchUrl, context, fallbackResults 
         url,
         title: resultTitle(fallback, url),
       }))
+      stages.push({
+        url,
+        tool: 'fetch_url',
+        status: 'ok',
+        summary: `轻量读取成功：${resultTitle(payload, url)}`,
+      })
     } else {
-      failures.push({
+      const fetchFailure = {
         url,
         tool: asText(payload.tool, 'fetch_url'),
-        reason: asText(payload.error || payload.hint || payload.status, '读取失败'),
+        reason: failureReason(payload),
+      }
+      stages.push({
+        ...fetchFailure,
+        status: 'failed',
+        summary: `轻量读取失败：${fetchFailure.reason}`,
       })
+      if (shouldEscalateToBrowserRead(payload)) {
+        let browserPayload
+        try {
+          browserPayload = await runBrowserRead(browserRead, url, context)
+        } catch (err) {
+          browserPayload = { ok: false, tool: 'browser_read', url, error: err?.message || String(err) }
+        }
+        if (browserPayload.ok) {
+          pages.push(compactPage({
+            ...browserPayload,
+            fetch_source: 'browser_read',
+          }, {
+            url,
+            title: resultTitle(fallback, url),
+          }))
+          stages.push({
+            url,
+            tool: 'browser_read',
+            status: 'ok',
+            summary: `浏览器渲染读取成功：${resultTitle(browserPayload, url)}`,
+          })
+        } else {
+          const browserFailure = {
+            url,
+            tool: 'browser_read',
+            reason: failureReason(browserPayload),
+          }
+          failures.push(browserFailure)
+          stages.push({
+            ...browserFailure,
+            status: 'failed',
+            summary: `浏览器渲染读取失败：${browserFailure.reason}`,
+          })
+        }
+      } else {
+        failures.push(fetchFailure)
+      }
     }
   }
-  return { pages, failures }
+  return { pages, failures, stages }
 }
 
 export async function readBrowserMission({
@@ -185,6 +294,7 @@ export async function readBrowserMission({
   input = {},
   webSearch = execWebSearch,
   fetchUrl = execFetchUrl,
+  browserRead = execBrowserRead,
   signal,
 } = {}) {
   const text = missionText(mission, input)
@@ -192,7 +302,7 @@ export async function readBrowserMission({
   const urls = extractWebUrls(text)
 
   if (urls.length) {
-    const { pages, failures } = await fetchReadablePages(urls, fetchUrl, context)
+    const { pages, failures, stages } = await fetchReadablePages(urls, { fetchUrl, browserRead }, context)
     const summary = summarizePages({ mode: 'url', pages, failures })
     return {
       kind: 'browser-read-result',
@@ -200,11 +310,13 @@ export async function readBrowserMission({
       mode: 'url',
       query: '',
       urls,
-      sourceTools: ['fetch_url'],
+      sourceTools: unique(stages.map(stage => stage.tool)),
       pages,
       failures,
+      stages,
       summary,
       evidence: [
+        ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
         ...pages.map(pageEvidence),
         ...failures.map(item => `读取失败：${item.url}（${item.reason}）`),
       ],
@@ -244,7 +356,7 @@ export async function readBrowserMission({
 
   const results = normalizeArray(searchPayload.results)
   const resultUrls = unique(results.map(resultUrl)).slice(0, MAX_FETCHED_SOURCES)
-  const { pages, failures } = await fetchReadablePages(resultUrls, fetchUrl, context, results)
+  const { pages, failures, stages } = await fetchReadablePages(resultUrls, { fetchUrl, browserRead }, context, results)
   const summary = summarizePages({
     query,
     mode: 'search',
@@ -258,13 +370,15 @@ export async function readBrowserMission({
     mode: 'search',
     query,
     urls: resultUrls,
-    sourceTools: ['web_search', 'fetch_url'],
+    sourceTools: unique(['web_search', ...stages.map(stage => stage.tool)]),
     pages,
     failures,
+    stages,
     summary,
     evidence: [
       `搜索查询：${query}`,
       `搜索来源：${asText(searchPayload.source, 'web_search')}`,
+      ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
       ...pages.map(pageEvidence),
       ...failures.map(item => `读取失败：${item.url}（${item.reason}）`),
     ],

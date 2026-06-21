@@ -475,6 +475,36 @@ try {
   assert(liveBrowserReviewing.artifacts.at(-1).summary.includes('Vela Live Browser Source'), 'async browser command writes live source summary')
   assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('example.com/vela')), 'async browser command review keeps source evidence')
 
+  runtime.applyCurrentMissionCommand({
+    text: '帮我打开网页总结 https://example.com/js-fail',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const failedBrowserReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchUrl: async (args) => JSON.stringify({
+        ok: false,
+        tool: 'fetch_url',
+        url: args.url,
+        error: 'no readable content',
+        hint: 'The page requires JavaScript or blocks crawlers. Use browser_read instead.',
+      }),
+      browserRead: async (args) => JSON.stringify({
+        ok: false,
+        tool: 'browser_read',
+        url: args.url,
+        error: 'captcha required',
+      }),
+    },
+  })
+  assert(failedBrowserReviewing.state === 'Reviewing', 'failed browser command still reaches reviewing with evidence')
+  assert(failedBrowserReviewing.toolCalls.at(-1).status === 'failed', 'failed browser command records failed tool call')
+  assert(failedBrowserReviewing.reviewChecks.at(-1).outcome === 'failed', 'failed browser command records failed review check')
+  assert(failedBrowserReviewing.reviewChecks.at(-1).failures.some(item => item.includes('captcha required')), 'failed browser command records browser failure reason')
+  assert(failedBrowserReviewing.recoveryActions.some(item => item.source === 'review_blocked' && item.status === 'open'), 'failed browser command opens review recovery action')
+
   const browserSubmitMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页填写表单并提交',
     source: 'test-command',

@@ -49,6 +49,69 @@ try {
   assert(directRead.pages.at(-1).ok === true, 'direct URL stores a compact successful page')
   assert(directNoBrowserFallback === true, 'direct URL disables implicit browser fallback')
 
+  const escalatedCalls = []
+  const browserEscalatedRead = await reader.readBrowserMission({
+    mission: {
+      title: '帮我打开网页总结 https://example.com/js-app',
+      goal: '帮我打开网页总结 https://example.com/js-app',
+      inputs: [],
+    },
+    fetchUrl: async (args) => {
+      escalatedCalls.push(['fetch', args.url, args.no_browser_fallback])
+      return JSON.stringify({
+        ok: false,
+        tool: 'fetch_url',
+        url: args.url,
+        error: 'no readable content',
+        hint: 'The page requires JavaScript or blocks crawlers. Use browser_read instead.',
+      })
+    },
+    browserRead: async (args) => {
+      escalatedCalls.push(['browser', args.url, args.timeout_ms])
+      return JSON.stringify({
+        ok: true,
+        tool: 'browser_read',
+        url: args.url,
+        final_url: args.url,
+        title: 'Rendered JS App',
+        content: 'Chromium rendered the JavaScript page and extracted readable Vela content.',
+        content_length: 76,
+      })
+    },
+  })
+  assert(browserEscalatedRead.ok === true, 'browser fallback succeeds when lightweight fetch needs rendering')
+  assert(browserEscalatedRead.sourceTools.join('+') === 'fetch_url+browser_read', 'browser fallback records both source tools')
+  assert(browserEscalatedRead.pages.at(-1).fetch_source === 'browser_read', 'browser fallback marks rendered source')
+  assert(browserEscalatedRead.stages.some(stage => stage.tool === 'fetch_url' && stage.status === 'failed'), 'browser fallback records lightweight failure stage')
+  assert(browserEscalatedRead.stages.some(stage => stage.tool === 'browser_read' && stage.status === 'ok'), 'browser fallback records browser success stage')
+  assert(browserEscalatedRead.evidence.some(item => item.includes('browser_read ok')), 'browser fallback evidence includes browser stage')
+  assert(escalatedCalls.some(call => call[0] === 'browser'), 'browser fallback invokes browser_read explicitly')
+
+  const browserFailedRead = await reader.readBrowserMission({
+    mission: {
+      title: '帮我打开网页总结 https://example.com/captcha',
+      goal: '帮我打开网页总结 https://example.com/captcha',
+      inputs: [],
+    },
+    fetchUrl: async (args) => JSON.stringify({
+      ok: false,
+      tool: 'fetch_url',
+      url: args.url,
+      error: 'access denied',
+      hint: 'Use browser_read instead.',
+    }),
+    browserRead: async (args) => JSON.stringify({
+      ok: false,
+      tool: 'browser_read',
+      url: args.url,
+      error: 'captcha required',
+      hint: 'The page may require login or CAPTCHA.',
+    }),
+  })
+  assert(browserFailedRead.ok === false, 'browser failure remains non-ok after fallback fails')
+  assert(browserFailedRead.failures.at(-1).tool === 'browser_read', 'browser failure records browser_read as final failed tool')
+  assert(browserFailedRead.summary.includes('captcha required'), 'browser failure summary includes recovery reason')
+
   const calls = []
   const searchRead = await reader.readBrowserMission({
     mission: {
