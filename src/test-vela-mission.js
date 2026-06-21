@@ -81,6 +81,35 @@ try {
   assert(desktopAdapterRun.reviewCheck.outcome === 'passed', 'desktop adapter review passes for mocked inspection')
   assert(desktopAdapterRun.toolStages.some(item => item.toolName === 'desktop.open-app' && item.url === 'app://wechat'), 'desktop adapter records mocked app-open stage')
   assert(desktopAdapterRun.toolStages.some(item => item.toolName === 'desktop.external-effect' && item.status === 'skipped'), 'desktop adapter records no hidden external effect')
+  const filesCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我生成一份报告')[0]
+  assert(filesCapability.id === 'files.document-work', 'capability registry routes document tasks to file work')
+  assert(filesCapability.integrationStatus === 'adapter-ready', 'files capability is marked adapter-ready')
+  const filesAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    title: '帮我生成一份报告',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [filesCapability],
+  })
+  assert(filesAdapterPlan.toolCall.toolName === 'files.document-work.prepare', 'files adapter prepares a document tool call')
+  assert(!filesAdapterPlan.permission, 'files adapter does not request permission for internal artifacts')
+  const filesAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-files-adapter',
+    title: '帮我生成一份报告',
+    goal: '帮我生成一份报告',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [filesCapability],
+    toolCalls: [filesAdapterPlan.toolCall],
+    artifacts: [filesAdapterPlan.artifact],
+  })
+  assert(filesAdapterRun.toolCall.toolName === 'files.document-work.generate', 'files adapter records document generation')
+  assert(filesAdapterRun.artifact.kind === 'document-draft', 'files adapter creates document draft artifact')
+  assert(filesAdapterRun.reviewCheck.title === '文件产物复核', 'files adapter creates artifact review')
+  assert(filesAdapterRun.toolStages.some(item => item.toolName === 'files.local-write' && item.status === 'skipped'), 'files adapter skips local write by default')
+  const filesWritePlan = capabilityAdapters.planCapabilityAdapterRun({
+    title: '帮我保存报告到本地文件',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [filesCapability],
+  })
+  assert(filesWritePlan.permission?.risk === 'Write', 'files adapter gates local disk write')
 
   const seed = runtime.getCurrentMission()
   assert(seed.id === 'mission-vela-shell', 'seed mission is available before persistence')
@@ -574,6 +603,38 @@ try {
   assert(browserSubmitGate.toolCalls.at(-1).status === 'needs-permission', 'browser submit tool call records permission need')
   assert(browserSubmitGate.permissions.at(-1).requestedBy === 'Vela Browser Adapter', 'browser submit permission records adapter requester')
   assert(browserSubmitGate.permissions.at(-1).toolCallId === browserSubmitGate.toolCalls.at(-1).id, 'browser submit permission links to tool call')
+
+  const filesCommandMission = runtime.applyCurrentMissionCommand({
+    text: '帮我生成一份 Vela 进展报告',
+    source: 'test-command',
+  })
+  assert(filesCommandMission.capabilityReferences.some(item => item.id === 'files.document-work'), 'files command mission matches file capability')
+  const filesCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(filesCommandRunning.state === 'Running', 'files command enters running state')
+  assert(filesCommandRunning.toolCalls.at(-1).toolName === 'files.document-work.prepare', 'files command records file prepare tool call')
+  assert(filesCommandRunning.artifacts.at(-1).title === '文件产物方案', 'files command creates file plan artifact')
+  const filesCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(filesCommandReviewing.state === 'Reviewing', 'files command moves to reviewing after draft generation')
+  assert(filesCommandReviewing.toolCalls.at(-1).toolName === 'files.document-work.generate', 'files command records document generation')
+  assert(filesCommandReviewing.artifacts.at(-1).kind === 'document-draft', 'files command creates document draft artifact')
+  assert(filesCommandReviewing.reviewChecks.at(-1).title === '文件产物复核', 'files command creates file review check')
+  assert(filesCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'files command review passes')
+  const filesGenerateToolId = filesCommandReviewing.toolCalls.at(-1).id
+  const filesStages = filesCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === filesGenerateToolId)
+  assert(filesStages.some(item => item.toolName === 'files.outline' && item.result === 'ok'), 'files command records outline stage')
+  assert(filesStages.some(item => item.toolName === 'files.local-write' && item.result === 'skipped'), 'files command records skipped local write stage')
+
+  const filesWriteMission = runtime.applyCurrentMissionCommand({
+    text: '帮我保存报告到本地文件',
+    source: 'test-command',
+  })
+  assert(filesWriteMission.capabilityReferences.some(item => item.id === 'files.document-work'), 'files write mission matches file capability')
+  const filesWriteGate = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(filesWriteGate.state === 'Waiting for permission', 'files write command waits for permission')
+  assert(filesWriteGate.toolCalls.at(-1).toolName === 'files.document-work.prepare', 'files write command records prepare tool')
+  assert(filesWriteGate.toolCalls.at(-1).status === 'needs-permission', 'files write command records permission need')
+  assert(filesWriteGate.permissions.at(-1).requestedBy === 'Vela File Adapter', 'files write permission records adapter requester')
+  assert(filesWriteGate.permissions.at(-1).risk === 'Write', 'files write permission records write risk')
 
   const desktopCommandMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开微信',

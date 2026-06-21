@@ -42,6 +42,10 @@ function primaryDesktopCapability(mission = {}) {
   return capabilityById(mission, 'desktop.app-control')
 }
 
+function primaryFilesCapability(mission = {}) {
+  return capabilityById(mission, 'files.document-work')
+}
+
 function latestBrowserPrepareTool(mission = {}) {
   return [...normalizeArray(mission.toolCalls)]
     .reverse()
@@ -83,6 +87,23 @@ function hasDesktopResultForPrepare(mission = {}, prepareToolId = '') {
   ))
 }
 
+function latestFilesPrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'files.document-work.prepare'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasFilesResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
+  ))
+}
+
 function browserRiskForMission(mission = {}, input = {}) {
   const text = missionText(mission, input)
   if (/(?:密码|密钥|凭证|验证码|登录|login|password|credential|captcha|otp)/i.test(text)) {
@@ -95,6 +116,23 @@ function browserRiskForMission(mission = {}, input = {}) {
     return {
       risk: 'Network',
       reason: '浏览器任务可能提交表单、发送数据或产生外部网络效果。',
+    }
+  }
+  return null
+}
+
+function fileWriteRiskForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  if (/(?:删除|移除|清空|覆盖|overwrite|delete|remove|trash)/i.test(text)) {
+    return {
+      risk: 'Write',
+      reason: '文件任务可能删除、覆盖或清空本地内容。',
+    }
+  }
+  if (/(?:保存|写入|写到|存到|导出|创建文件|写文件|改文件|修改文件|save\s+to|write\s+to|write file|save file|export\s+to)/i.test(text)) {
+    return {
+      risk: 'Write',
+      reason: '文件任务可能写入或修改本地文件。',
     }
   }
   return null
@@ -191,9 +229,76 @@ function planDesktopAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function documentKindForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  if (/(?:表格|excel|spreadsheet|csv|xlsx)/i.test(text)) return 'spreadsheet-draft'
+  if (/(?:pdf)/i.test(text)) return 'pdf-draft'
+  return 'document-draft'
+}
+
+function documentTitleForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  if (/(?:表格|excel|spreadsheet|csv|xlsx)/i.test(text)) return '表格草稿'
+  if (/(?:pdf)/i.test(text)) return 'PDF 草稿'
+  if (/(?:报告|report)/i.test(text)) return '报告草稿'
+  return '文档草稿'
+}
+
+function planFilesAdapterRun(mission = {}, input = {}) {
+  const capability = primaryFilesCapability(mission)
+  if (capability?.id !== 'files.document-work') return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId(capability.id)
+  const guardedRisk = fileWriteRiskForMission(mission, input)
+  const title = documentTitleForMission(mission, input)
+  const summary = guardedRisk
+    ? `文件文档代理已识别到真实磁盘写入风险，会先准备「${title}」但不会写入、覆盖或删除本地文件，等待 Guard 确认。`
+    : `文件文档代理已准备生成「${title}」作为 Vela 任务产物；当前只创建内部 artifact，不写入、覆盖或删除本地文件。`
+  const run = {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'files.document-work.prepare',
+      role: 'Builder',
+      status: guardedRisk ? 'needs-permission' : 'prepared',
+      planStepId,
+      risk: guardedRisk?.risk || 'Read',
+      result: summary,
+    },
+    artifact: {
+      title: '文件产物方案',
+      kind: 'plan',
+      uri: `vela://capabilities/files.document-work/runs/${toolCallId}`,
+      summary,
+      planStepId,
+    },
+    nextStep: guardedRisk
+      ? '文件文档代理需要你确认写入范围后，才会继续涉及本地文件的动作。'
+      : '文件文档代理已准备好生成内部文档产物；继续后进入产物复核。',
+  }
+
+  if (guardedRisk) {
+    run.permission = {
+      action: `确认文件文档代理执行：${asText(mission.title || mission.goal, '当前文件任务')}`,
+      risk: guardedRisk.risk,
+      decision: 'requested',
+      summary,
+      reason: guardedRisk.reason,
+      requestedBy: 'Vela File Adapter',
+      planStepId,
+      toolCallId,
+      scope: asText(capability.provenance, 'vela://capabilities/files.document-work'),
+    }
+  }
+
+  return run
+}
+
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
   return planBrowserAdapterRun(mission, input)
     || planDesktopAdapterRun(mission, input)
+    || planFilesAdapterRun(mission, input)
 }
 
 function browserExecutionSummary(mission = {}) {
@@ -393,9 +498,91 @@ function executeDesktopAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function documentDraftSummary(mission = {}, input = {}) {
+  const goal = asText(mission.goal || mission.title || input.text, '当前文件任务')
+  return `已为「${goal}」生成 Vela 内部文档草稿：包含任务目标、建议结构、关键内容提纲和后续可编辑产物说明；当前没有写入、覆盖或删除本地文件。`
+}
+
+function executeFilesAdapterRun(mission = {}, input = {}) {
+  const capability = primaryFilesCapability(mission)
+  if (capability?.id !== 'files.document-work') return null
+
+  const prepareTool = latestFilesPrepareTool(mission)
+  if (!prepareTool || hasFilesResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId('files.document-work.generate')
+  const artifactId = makeAdapterResultId('files.document-work')
+  const title = documentTitleForMission(mission, input)
+  const kind = documentKindForMission(mission, input)
+  const summary = documentDraftSummary(mission, input)
+  const evidence = [
+    `准备工具调用：${prepareTool.id}`,
+    `产物类型：${kind}`,
+    '产物保存在 Vela mission artifact 中。',
+    '未写入、覆盖或删除本地文件。',
+    '真实文件保存、覆盖或删除仍需 Guard 确认。',
+  ]
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'files.document-work.generate',
+      role: 'Builder',
+      status: 'ok',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title,
+      kind,
+      uri: `vela://capabilities/files.document-work/results/${prepareTool.id}`,
+      summary,
+      planStepId,
+    },
+    reviewCheck: {
+      key: `file-artifact-${asText(mission.id, 'mission')}`,
+      title: '文件产物复核',
+      outcome: 'passed',
+      reviewer: 'Vela File Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: '文件文档适配器生成了可复核的内部产物，并确认没有执行本地磁盘写入。',
+      evidence,
+      failures: [],
+    },
+    toolStages: [
+      {
+        toolName: 'files.outline',
+        status: 'ok',
+        stage: 'document-outline',
+        summary: '生成文档结构和关键内容提纲。',
+        url: `vela://capabilities/files.document-work/results/${prepareTool.id}#outline`,
+        planStepId,
+        role: 'Builder',
+      },
+      {
+        toolName: 'files.local-write',
+        status: 'skipped',
+        stage: 'no-disk-write',
+        summary: '未写入、覆盖或删除本地文件。',
+        url: 'file://local-write-skipped',
+        planStepId,
+        role: 'Builder',
+      },
+    ],
+    nextStep: '文件文档草稿已准备好；需要保存到本地文件时，我会先向你确认路径和写入范围。',
+  }
+}
+
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
   return executeBrowserAdapterRun(mission, input)
     || executeDesktopAdapterRun(mission, input)
+    || executeFilesAdapterRun(mission, input)
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {
