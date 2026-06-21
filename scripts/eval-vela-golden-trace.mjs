@@ -70,6 +70,16 @@ try {
     planStepId: 'execute',
     result: 'Guarded implementation command finished.',
   })
+  runtime.appendCurrentMissionToolStage({
+    toolName: 'golden.runner',
+    toolCallId: 'tool-golden-runner',
+    role: 'Builder',
+    status: 'ok',
+    stage: 'command-exit',
+    url: 'vela://golden-runner/stages/command-exit',
+    planStepId: 'execute',
+    summary: 'Golden runner command exited successfully.',
+  })
   const artifact = runtime.appendCurrentMissionArtifact({
     id: 'artifact-golden-report',
     title: 'Golden implementation report',
@@ -134,6 +144,7 @@ try {
     'memory.reference',
     'agent.action',
     'tool.called',
+    'tool.stage',
     'artifact.added',
     'permission.recorded',
     'state.changed',
@@ -154,6 +165,13 @@ try {
   assert(toolTrace?.planStepId === 'execute', 'tool trace links plan step')
   assert(toolTrace?.toolName === 'golden.runner', 'tool trace links tool name')
   assert(toolTrace?.agentRole === 'Builder', 'tool trace links agent role')
+
+  const toolStageTrace = findTrace(trace, 'tool.stage')
+  assert(toolStageTrace?.toolCallId === 'tool-golden-runner', 'tool stage trace links tool call id')
+  assert(toolStageTrace?.toolName === 'golden.runner', 'tool stage trace links stage tool name')
+  assert(toolStageTrace?.stage === 'command-exit', 'tool stage trace records stage name')
+  assert(toolStageTrace?.url === 'vela://golden-runner/stages/command-exit', 'tool stage trace records stage URL')
+  assert(toolStageTrace?.result === 'ok', 'tool stage trace records stage result')
 
   const artifactTrace = findTrace(trace, 'artifact.added')
   assert(artifactTrace?.artifactId === 'artifact-golden-report', 'artifact trace links artifact id')

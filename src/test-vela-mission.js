@@ -271,6 +271,24 @@ try {
   assert(withToolCall.toolCalls.at(-1).role === 'Builder', 'mission tool call records agent role')
   assert(withToolCall.trace.at(-1).type === 'tool.called', 'mission tool call records trace event')
   assert(withToolCall.trace.at(-1).agentRole === 'Builder', 'mission tool call trace records agent role')
+  assert(withToolCall.trace.at(-1).toolCallId === withToolCall.toolCalls.at(-1).id, 'mission tool call trace links tool call id')
+
+  const withToolStage = runtime.appendCurrentMissionToolStage({
+    toolName: 'test.runner',
+    toolCallId: withToolCall.toolCalls.at(-1).id,
+    role: 'Builder',
+    status: 'ok',
+    stage: 'stdout-read',
+    url: 'vela://runtime-tool-stage',
+    planStepId: 'two',
+    summary: 'Runtime stage evidence was captured.',
+  })
+  assert(withToolStage.trace.at(-1).type === 'tool.stage', 'mission tool stage records trace event')
+  assert(withToolStage.trace.at(-1).toolName === 'test.runner', 'mission tool stage records tool name')
+  assert(withToolStage.trace.at(-1).toolCallId === withToolCall.toolCalls.at(-1).id, 'mission tool stage links tool call id')
+  assert(withToolStage.trace.at(-1).stage === 'stdout-read', 'mission tool stage records stage name')
+  assert(withToolStage.trace.at(-1).url === 'vela://runtime-tool-stage', 'mission tool stage records stage URL')
+  assert(withToolStage.trace.at(-1).result === 'ok', 'mission tool stage records stage result')
 
   const withReviewCheck = runtime.appendCurrentMissionReviewCheck({
     title: 'Runtime claim accuracy',
@@ -474,6 +492,14 @@ try {
   assert(liveBrowserReviewing.toolCalls.at(-1).result.includes('fetch_url'), 'async browser command records live fetch tool')
   assert(liveBrowserReviewing.artifacts.at(-1).summary.includes('Vela Live Browser Source'), 'async browser command writes live source summary')
   assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('example.com/vela')), 'async browser command review keeps source evidence')
+  const liveBrowserReadToolId = liveBrowserReviewing.toolCalls.at(-1).id
+  const liveBrowserFetchStage = liveBrowserReviewing.trace.find(item => (
+    item.type === 'tool.stage'
+      && item.toolCallId === liveBrowserReadToolId
+      && item.toolName === 'fetch_url'
+      && item.url.includes('example.com/vela')
+  ))
+  assert(liveBrowserFetchStage?.result === 'ok', 'async browser command records fetch_url stage success')
 
   runtime.applyCurrentMissionCommand({
     text: '帮我打开网页总结 https://example.com/js-fail',
@@ -504,6 +530,13 @@ try {
   assert(failedBrowserReviewing.reviewChecks.at(-1).outcome === 'failed', 'failed browser command records failed review check')
   assert(failedBrowserReviewing.reviewChecks.at(-1).failures.some(item => item.includes('captcha required')), 'failed browser command records browser failure reason')
   assert(failedBrowserReviewing.recoveryActions.some(item => item.source === 'review_blocked' && item.status === 'open'), 'failed browser command opens review recovery action')
+  const failedBrowserReadToolId = failedBrowserReviewing.toolCalls.at(-1).id
+  const failedBrowserStages = failedBrowserReviewing.trace.filter(item => (
+    item.type === 'tool.stage' && item.toolCallId === failedBrowserReadToolId
+  ))
+  assert(failedBrowserStages.some(item => item.toolName === 'fetch_url' && item.result === 'failed'), 'failed browser command records failed fetch_url stage')
+  assert(failedBrowserStages.some(item => item.toolName === 'browser_read' && item.result === 'failed'), 'failed browser command records failed browser_read stage')
+  assert(failedBrowserStages.some(item => item.url.includes('example.com/js-fail')), 'failed browser command stage trace keeps target URL')
 
   const browserSubmitMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页填写表单并提交',

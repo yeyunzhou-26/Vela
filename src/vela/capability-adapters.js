@@ -145,7 +145,21 @@ function normalizeBrowserReadResult(value) {
     sourceTools: normalizeArray(value.sourceTools).map(item => asText(item)).filter(Boolean),
     failures: normalizeArray(value.failures),
     pages: normalizeArray(value.pages),
+    stages: normalizeArray(value.stages).map(normalizeBrowserStage),
     urls: normalizeArray(value.urls).map(item => asText(item)).filter(Boolean),
+  }
+}
+
+function normalizeBrowserStage(stage = {}, index = 0) {
+  const tool = asText(stage.tool || stage.toolName, 'browser')
+  const status = asText(stage.status || stage.result, stage.ok === false ? 'failed' : 'ok')
+  return {
+    id: asText(stage.id, `browser-stage-${index + 1}`),
+    tool,
+    status,
+    url: asText(stage.url || stage.final_url || stage.href, ''),
+    summary: asText(stage.summary || stage.detail || stage.reason || stage.error, ''),
+    reason: asText(stage.reason || stage.error, ''),
   }
 }
 
@@ -209,6 +223,15 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
           ],
       failures: ok ? [] : normalizeArray(readResult?.failures).map(item => asText(item.reason || item.error || item.url)).filter(Boolean),
     },
+    toolStages: normalizeArray(readResult?.stages).map((stage, index) => ({
+    toolName: stage.tool,
+    status: stage.status,
+    stage: `browser-read-${index + 1}`,
+    summary: stage.summary || stage.reason || stage.url,
+    url: stage.url,
+      planStepId,
+      role: 'Operator',
+    })),
     nextStep: ok
       ? '浏览器结果摘要已准备好；你可以查看产物，确认后说“通过”或“完成”。'
       : '浏览器读取没有成功；你可以换一个网址、补充关键词，或让我继续调整。',

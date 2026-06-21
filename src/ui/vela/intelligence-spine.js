@@ -135,6 +135,7 @@ const AUDIT_MARKS = {
   'memory.reference': 'MEM',
   'agent.action': 'AGT',
   'tool.called': 'TOOL',
+  'tool.stage': 'STG',
   'artifact.added': 'ART',
   'permission.recorded': 'GRD',
   'permission.mode.changed': 'GRD',
@@ -165,6 +166,9 @@ function auditMetaParts(entry = {}) {
   return [
     text(entry.planStepId) ? `${zh('Step')}: ${text(entry.planStepId)}` : '',
     text(entry.toolName) ? `${zh('Tool')}: ${text(entry.toolName)}` : '',
+    text(entry.toolCallId) && text(entry.toolCallId) !== text(entry.toolName) ? `${zh('Tool call')}: ${text(entry.toolCallId)}` : '',
+    text(entry.stage) ? `${zh('Stage')}: ${text(entry.stage)}` : '',
+    text(entry.url) ? `${zh('URL')}: ${text(entry.url)}` : '',
     text(entry.artifactId) ? `${zh('Artifact')}: ${text(entry.artifactId)}` : '',
     text(entry.memoryReferenceId) ? `${zh('Memory')}: ${text(entry.memoryReferenceId)}` : '',
     text(entry.permissionDecision) ? `${zh('Permission')}: ${zh(text(entry.permissionDecision))}` : '',
@@ -207,6 +211,11 @@ function buildSpineEntries(mission = {}) {
   const latestVoiceMetric = lastOf(voiceMetrics)
   const latestRecovery = lastOf(recoveryActions)
   const latestReviewCheck = lastOf(reviewChecks)
+  const toolStageEvents = trace.filter(entry => text(entry.type) === 'tool.stage')
+  const latestToolStage = lastOf(toolStageEvents)
+  const latestToolStageNeedsAttention = latestToolStage
+    ? !/^(ok|done|success|passed|ready)$/i.test(text(latestToolStage.result || latestToolStage.status, 'ok'))
+    : false
   const screenContext = latestScreenContext(inputs, voiceMetrics, trace)
   const review = mission.reviewResult || null
   const reviewOutcome = text(review?.outcome || review?.status, 'Not reviewed yet')
@@ -264,8 +273,8 @@ function buildSpineEntries(mission = {}) {
     },
     {
       ...baseEntry('tools'),
-      status: latestAction?.requiresReview || (latestTool?.status && !/^(ok|done|success|passed)$/i.test(latestTool.status)) ? 'watch' : (toolCalls.length || agentActions.length || capabilityReferences.length ? 'ready' : 'idle'),
-      summary: toolCalls.length || agentActions.length || capabilityReferences.length
+      status: latestAction?.requiresReview || latestToolStageNeedsAttention || (latestTool?.status && !/^(ok|done|success|passed)$/i.test(latestTool.status)) ? 'watch' : (toolCalls.length || agentActions.length || capabilityReferences.length || toolStageEvents.length ? 'ready' : 'idle'),
+      summary: toolCalls.length || agentActions.length || capabilityReferences.length || toolStageEvents.length
         ? 'Agent actions and tool calls are mapped back to mission execution.'
         : 'Agent actions and tool calls will appear here when Vela acts.',
       details: [
@@ -284,6 +293,11 @@ function buildSpineEntries(mission = {}) {
         ['Role', text(latestTool?.role || latestTool?.agentRole, 'Operator')],
         ['Plan step', text(latestTool?.planStepId, 'Not linked yet')],
         ['Result', text(latestTool?.result || latestTool?.status, 'No tool result yet')],
+        ['Tool stages', String(toolStageEvents.length)],
+        ['Latest stage', text(latestToolStage?.title || latestToolStage?.stage, 'No staged tool evidence yet')],
+        ['Stage tool', text(latestToolStage?.toolName, 'No stage tool yet')],
+        ['Stage result', text(latestToolStage?.result, 'No stage result yet')],
+        ['Stage URL', text(latestToolStage?.url, 'No stage URL recorded')],
       ],
     },
     {

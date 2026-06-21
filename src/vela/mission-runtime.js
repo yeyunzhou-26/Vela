@@ -727,6 +727,14 @@ function applyCapabilityAdapterExecution(current = {}, input = {}) {
   const run = executeCapabilityAdapterRun(current, input)
   if (!run) return current
   appendCurrentMissionToolCall(run.toolCall)
+  for (const stage of normalizeArray(run.toolStages)) {
+    appendCurrentMissionToolStage({
+      ...stage,
+      toolCallId: asText(stage.toolCallId, run.toolCall?.id),
+      planStepId: asText(stage.planStepId, run.toolCall?.planStepId),
+      role: stage.role || run.toolCall?.role,
+    })
+  }
   if (run.artifact) appendCurrentMissionArtifact(run.artifact)
   if (run.reviewCheck) appendCurrentMissionReviewCheck(run.reviewCheck)
   if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })
@@ -781,6 +789,9 @@ function normalizeTraceEntry(value = {}) {
     planStepId: asText(value.planStepId, ''),
     artifactId: asText(value.artifactId, ''),
     toolName: asText(value.toolName, ''),
+    toolCallId: asText(value.toolCallId || value.toolId, ''),
+    stage: asText(value.stage || value.stageName, ''),
+    url: asText(value.url || value.href, ''),
     agentRole: normalizeAgentRole(value.agentRole || value.role, 'Operator'),
     permissionDecision: asText(value.permissionDecision, ''),
     memoryReferenceId: asText(value.memoryReferenceId, ''),
@@ -1259,11 +1270,32 @@ export function appendCurrentMissionToolCall(input = {}) {
     detail: record.result,
     planStepId: record.planStepId,
     toolName,
+    toolCallId: record.id,
     agentRole: role,
     result: status,
     createdAt: record.createdAt,
   })
   return writeCurrentMission(store, next)
+}
+
+export function appendCurrentMissionToolStage(input = {}) {
+  const toolName = asText(input.toolName || input.tool || input.name, 'tool')
+  const status = asText(input.status || input.result, 'ok')
+  const role = normalizeAgentRole(input.role || input.agentRole, 'Operator')
+  const createdAt = new Date().toISOString()
+  return appendCurrentMissionTrace({
+    type: 'tool.stage',
+    title: asText(input.title, `Tool stage ${status}: ${toolName}`),
+    detail: asText(input.summary || input.detail || input.reason, ''),
+    planStepId: asText(input.planStepId, ''),
+    toolName,
+    toolCallId: asText(input.toolCallId || input.toolId, ''),
+    stage: asText(input.stage || input.stageName, ''),
+    url: asText(input.url || input.final_url || input.href, ''),
+    agentRole: role,
+    result: status,
+    createdAt,
+  })
 }
 
 export function appendCurrentMissionAgentAction(input = {}) {
@@ -1341,6 +1373,7 @@ export function appendCurrentMissionReviewCheck(input = {}) {
     planStepId: record.planStepId,
     artifactId: record.artifactId,
     toolName: record.toolCallId,
+    toolCallId: record.toolCallId,
     agentRole: role,
     result: outcome,
     reviewOutcome: outcome,
@@ -1439,6 +1472,7 @@ export function appendCurrentMissionPermission(input = {}) {
     detail: record.reason || record.summary,
     planStepId: record.planStepId,
     toolName: record.toolCallId,
+    toolCallId: record.toolCallId,
     permissionDecision: record.decision,
     result: record.policy || policy.result || record.risk,
     createdAt: record.createdAt,
@@ -1515,6 +1549,7 @@ export function resolveCurrentMissionPermission(id, patch = {}) {
     detail: reason,
     planStepId: target.planStepId,
     toolName: target.toolCallId,
+    toolCallId: target.toolCallId,
     permissionDecision: decision,
     result: nextState !== current.state
       ? (approved ? 'resumed' : 'blocked')

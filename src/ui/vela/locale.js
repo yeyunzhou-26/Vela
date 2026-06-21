@@ -266,6 +266,8 @@ const ZH = {
   'No latency recorded': '没有记录延迟',
   Screen: '屏幕',
   Tool: '工具',
+  Stage: '阶段',
+  URL: '网址',
   Permission: '许可',
   Artifact: '产物',
   'Review result': '审查结果',
@@ -363,6 +365,15 @@ const ZH = {
   Role: '角色',
   'Plan step': '计划步骤',
   Result: '结果',
+  'Tool stages': '工具阶段数',
+  'Latest stage': '最新阶段',
+  'No staged tool evidence yet': '还没有工具阶段证据',
+  'Stage tool': '阶段工具',
+  'No stage tool yet': '还没有阶段工具',
+  'Stage result': '阶段结果',
+  'No stage result yet': '还没有阶段结果',
+  'Stage URL': '阶段网址',
+  'No stage URL recorded': '没有记录阶段网址',
   Mode: '模式',
   'Mission state': '任务状态',
   'Permission records': '许可记录',
@@ -531,6 +542,10 @@ export function zh(value) {
   }
   if (/^Tool called:\s*/i.test(text)) {
     return `工具已调用：${text.replace(/^Tool called:\s*/i, '')}`
+  }
+  if (/^Tool stage\s+(.+?):\s*/i.test(text)) {
+    const [, status] = text.match(/^Tool stage\s+(.+?):\s*/i) || []
+    return `工具阶段${status ? ` ${zh(status)}` : ''}：${text.replace(/^Tool stage\s+.+?:\s*/i, '')}`
   }
   if (/^(Planner|Builder|Researcher|Reviewer|Operator):\s*/i.test(text)) {
     const [, role, detail] = text.match(/^(Planner|Builder|Researcher|Reviewer|Operator):\s*(.*)$/i) || []
