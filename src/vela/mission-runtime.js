@@ -1017,6 +1017,111 @@ function advanceExternalMessagePlanToConfirm(plan = []) {
   })
 }
 
+function advanceExternalMessagePlanToSent(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (['understand-request', 'inspect-context', 'draft-reply', 'confirm-send'].includes(step.id)) {
+      return { ...step, status: 'Done' }
+    }
+    return step.status === 'Active' ? { ...step, status: 'Done' } : step
+  })
+}
+
+function isExternalMessageSendPermission(permission = {}) {
+  return asText(permission.risk).toLowerCase() === 'external message'
+    && asText(permission.toolCallId) === 'external.message.send'
+    && asText(permission.planStepId) === 'confirm-send'
+}
+
+function hasExternalMessageSendResult(mission = {}) {
+  return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'messages.outbound.send')
+    || normalizeArray(mission.artifacts).some(artifact => artifact?.kind === 'send-receipt')
+}
+
+function externalMessageSendReceiptSummary(mission = {}) {
+  const target = externalMessageDesktopTarget(mission)
+  return `已按确认发送到${target.appName}：「${draftExternalMessageText(mission)}」。`
+}
+
+function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
+  if (!isExternalMessageSendPermission(permission) || !isExternalMessageMission(mission)) return mission
+  if (hasExternalMessageSendResult(mission)) return mission
+
+  const target = externalMessageDesktopTarget(mission)
+  const draftText = draftExternalMessageText(mission)
+  const toolCallId = makeId('tool-messages-outbound-send')
+  const artifactId = makeId('artifact-send-receipt')
+  const summary = `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；接入真实应用发送前仍必须由 External message 确认触发。`
+
+  appendCurrentMissionAgentAction({
+    role: 'Operator',
+    title: '发送已确认回复',
+    status: 'sent',
+    planStepId: 'confirm-send',
+    summary,
+    result: '已发送',
+    requiresReview: false,
+  })
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'messages.outbound.send',
+    role: 'Operator',
+    status: 'ok',
+    planStepId: 'confirm-send',
+    risk: 'External message',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'messages.external-send',
+    toolCallId,
+    role: 'Operator',
+    status: 'ok',
+    stage: 'confirmed-send',
+    url: `external://messages/${encodeURIComponent(target.appName)}/mock-send`,
+    planStepId: 'confirm-send',
+    summary: `根据用户确认记录模拟发送：「${draftText}」。`,
+  })
+  appendCurrentMissionArtifact({
+    id: artifactId,
+    title: '发送回执',
+    kind: 'send-receipt',
+    uri: `vela://capabilities/messages.outbound/results/${toolCallId}`,
+    summary,
+    planStepId: 'confirm-send',
+  })
+  appendCurrentMissionReviewCheck({
+    key: `external-message-send-${asText(mission.id, 'mission')}`,
+    title: '外部发送复核',
+    outcome: 'passed',
+    reviewer: 'Vela Message Reviewer',
+    planStepId: 'confirm-send',
+    artifactId,
+    toolCallId,
+    summary: '外部消息只在用户批准后生成发送结果，批准前没有隐藏发送动作。',
+    evidence: [
+      `批准记录：${permission.id}`,
+      `目标应用：${target.appName}`,
+      `发送内容：${draftText}`,
+      '发送阶段发生在 External message 权限批准之后。',
+      '当前为模拟发送回执，未调用真实外部应用发送接口。',
+    ],
+  })
+  setCurrentMissionReview({
+    outcome: 'passed',
+    reviewer: 'Vela Message Reviewer',
+    summary: '外部消息发送链路已通过：先草拟，用户确认后发送，并记录发送回执。',
+    evidence: [
+      `Permission ${permission.id} approved.`,
+      `Tool ${toolCallId} recorded after approval.`,
+    ],
+  })
+  const reviewedMission = getCurrentMission()
+  return updateCurrentMission({
+    state: 'Complete',
+    plan: advanceExternalMessagePlanToSent(reviewedMission.plan),
+    nextStep: externalMessageSendReceiptSummary(reviewedMission),
+  })
+}
+
 function advanceExternalMessageMissionByCommand(current = {}, input = {}, text = '') {
   const createdAt = new Date().toISOString()
   const summary = externalMessageDraftSummary(current)
@@ -1650,7 +1755,11 @@ export function resolveCurrentMissionPermission(id, patch = {}) {
       : (target.policy || target.risk),
     createdAt: resolvedAt,
   })
-  return writeCurrentMission(store, next)
+  const written = writeCurrentMission(store, next)
+  if (approved && !stillPending && isExternalMessageSendPermission(resolvedPermission)) {
+    return completeExternalMessageAfterApproval(written, resolvedPermission)
+  }
+  return written
 }
 
 export function appendCurrentMissionRecoveryAction(input = {}) {

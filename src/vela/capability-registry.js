@@ -141,7 +141,7 @@ export const OPEN_CAPABILITY_REGISTRY = [
       },
     ],
     integrationStatus: 'adapter-ready',
-    evaluation: 'test:vela-mission covers draft creation, External message risk, and approval resume.',
+    evaluation: 'test:vela-mission covers draft creation, External message risk, approval, send receipt, and no hidden pre-approval send.',
   },
   {
     id: 'memory.context-os',
