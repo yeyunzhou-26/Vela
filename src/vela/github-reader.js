@@ -979,6 +979,114 @@ function repoSearchSourceReadLine(read = {}, index = 0) {
   return [name, read.path, `status=${status}`, read.reason, detail, failure].filter(Boolean).join('；')
 }
 
+function capabilityDraftName(idea = '') {
+  return asText(idea).split('：')[0] || '项目拆解'
+}
+
+function localTargetsForCapabilityDraft(name = '') {
+  if (/浏览器|网页/.test(name)) {
+    return ['src/vela/capability-registry.js', 'src/vela/capability-adapters.js', 'src/vela/mission-runtime.js']
+  }
+  if (/Agent|执行循环|任务/.test(name)) {
+    return ['src/vela/mission-runtime.js', 'src/vela/capability-adapters.js', 'src/test-vela-mission.js']
+  }
+  if (/工具|MCP|桥接/.test(name)) {
+    return ['src/vela/capability-registry.js', 'src/vela/capability-adapters.js', 'src/vela/github-reader.js']
+  }
+  if (/上下文|记忆/.test(name)) {
+    return ['src/vela/mission-runtime.js', 'src/vela/capability-adapters.js', 'src/test-vela-mission.js']
+  }
+  if (/权限|守卫|安全/.test(name)) {
+    return ['src/vela/mission-runtime.js', 'src/vela/capability-adapters.js', 'src/test-vela-mission.js']
+  }
+  return ['src/vela/capability-registry.js', 'src/vela/capability-adapters.js', 'src/test-vela-mission.js']
+}
+
+function permissionBoundaryForCapabilityDraft(name = '') {
+  if (/浏览器|网页/.test(name)) return '页面观察和读取保持 Read；点击、提交表单、发送消息、登录凭据必须进入 Guard 确认。'
+  if (/工具|MCP|桥接/.test(name)) return '工具发现和只读读取可自动执行；写 issue、合并 PR、推送代码、访问凭证必须进入 Guard。'
+  if (/权限|守卫|安全/.test(name)) return '内部分类和复核可自动执行；任何外部副作用都必须携带风险、范围、证据和用户确认。'
+  return '内部规划、源码对照和 artifact 生成可自动执行；外部写入、发送、购买、删除、凭证读取必须进入 Guard。'
+}
+
+function sourceEvidenceLineForDraft(read = {}) {
+  if (!read.ok) {
+    return read.failure?.reason ? `${read.path}：读取失败，${read.failure.reason}` : `${read.path}：读取失败`
+  }
+  if (read.contentDetail?.contentExcerpt) {
+    return `${read.path}：${compactText(read.contentDetail.contentExcerpt, 220)}`
+  }
+  if (read.contentItems?.length) {
+    return `${read.path}：目录包含 ${read.contentItems.slice(0, 8).map(item => item.path || item.name).filter(Boolean).join(', ')}`
+  }
+  return read.path ? `${read.path}：已读取，但没有可用摘录` : ''
+}
+
+function implementationStepsForCapabilityDraft({ name = '', lesson = {}, plan = {}, sourceReads = [] } = {}) {
+  const sourcePaths = unique(sourceReads.map(read => read.path).filter(Boolean))
+  const localTargets = localTargetsForCapabilityDraft(name)
+  const firstIdea = asText(lesson.capabilityIdeas?.[0] || name)
+  const sourceStep = sourcePaths.length
+    ? `对照 ${sourcePaths.slice(0, 3).join('、')} 的源码证据，提取状态机、工具接口和失败恢复分支。`
+    : `先执行读取计划：${plan.nextCommand || lesson.nextAction || '补足 README、manifest 和源码入口证据。'}`
+  return [
+    sourceStep,
+    `在 ${localTargets.slice(0, 2).join(' 和 ')} 建模「${name}」的输入、输出、风险和阶段记录。`,
+    `把「${firstIdea}」落成 mission artifact、tool stage、review check 三件套，让用户首屏只看到自然结果。`,
+    '补上中文命令与异步 mission 流测试，证明能力能从聊天入口直接触发。',
+  ]
+}
+
+function reviewChecklistForCapabilityDraft(sourceReads = []) {
+  return [
+    sourceReads.length ? '有源码路径或目录证据支撑，不只停留在 README 判断。' : '源码证据不足时先保持草案状态，不进入实现。',
+    '所有外部副作用都能被 risk、scope、reason 和 Guard trace 追踪。',
+    '用户可见结果是自然语言和必要确认，不把内部审核清单堆在首屏。',
+    '失败时给出下一步恢复动作，并在 review evidence 中保留来源。',
+  ]
+}
+
+function capabilityDraftForLesson(lesson = {}, plan = {}, sourceReads = [], index = 0) {
+  const name = capabilityDraftName(lesson.capabilityIdeas?.[0])
+  const candidate = lesson.candidate || plan.candidate || `候选 ${index + 1}`
+  const candidateReads = normalizeArray(sourceReads).filter(read => read.candidate === candidate)
+  const okReads = candidateReads.filter(read => read.ok)
+  const sourceEvidence = unique([
+    ...normalizeArray(lesson.evidence).slice(0, 2),
+    ...candidateReads.map(sourceEvidenceLineForDraft),
+  ].filter(Boolean)).slice(0, 6)
+  const localTargets = localTargetsForCapabilityDraft(name)
+  const status = okReads.length ? 'draft-ready' : 'needs-source-evidence'
+  return {
+    candidate,
+    htmlUrl: asText(lesson.htmlUrl || plan.htmlUrl, ''),
+    title: `Vela 本地能力草案：${name}`,
+    capability: name,
+    status,
+    sourceConfidence: okReads.length >= 2 || lesson.fit === 'high' ? 'high' : 'medium',
+    sourcePaths: unique(candidateReads.map(read => read.path).filter(Boolean)),
+    localTargets,
+    implementationSteps: implementationStepsForCapabilityDraft({ name, lesson, plan, sourceReads: candidateReads }),
+    permissionBoundary: permissionBoundaryForCapabilityDraft(name),
+    reviewChecklist: reviewChecklistForCapabilityDraft(candidateReads),
+    sourceEvidence,
+    risks: normalizeArray(lesson.risks),
+  }
+}
+
+function synthesizeRepoSearchCapabilityDrafts(lessons = [], readPlans = [], sourceReads = []) {
+  return normalizeArray(lessons)
+    .filter(lesson => lesson?.candidate)
+    .map((lesson, index) => capabilityDraftForLesson(lesson, normalizeArray(readPlans)[index] || {}, sourceReads, index))
+}
+
+function repoSearchCapabilityDraftLine(draft = {}, index = 0) {
+  const name = draft.title || `能力草案 ${index + 1}`
+  const targets = draft.localTargets?.length ? `本地目标：${draft.localTargets.slice(0, 3).join('、')}` : ''
+  const evidence = draft.sourcePaths?.length ? `源码：${draft.sourcePaths.slice(0, 4).join('、')}` : ''
+  return [name, `status=${draft.status || 'unknown'}`, `confidence=${draft.sourceConfidence || 'unknown'}`, targets, evidence, draft.permissionBoundary].filter(Boolean).join('；')
+}
+
 async function analyzeSearchCandidate({
   repo,
   fetchJson,
@@ -1165,6 +1273,7 @@ function summarizeGitHubRead({
   repoSearchLessons = [],
   repoSearchReadPlans = [],
   repoSearchSourceReads = [],
+  repoSearchCapabilityDrafts = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -1208,7 +1317,10 @@ function summarizeGitHubRead({
     const sourceReadSummary = repoSearchSourceReads.length
       ? `已按计划读取 ${repoSearchSourceReads.length} 个源码目标：${repoSearchSourceReads.map(repoSearchSourceReadLine).join('；')}。`
       : ''
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${sourceReadSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const draftSummary = repoSearchCapabilityDrafts.length
+      ? `已形成 ${repoSearchCapabilityDrafts.length} 个 Vela 本地能力草案：${repoSearchCapabilityDrafts.map(repoSearchCapabilityDraftLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${sourceReadSummary}${draftSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -1300,6 +1412,7 @@ export async function readGitHubMission({
     let repoSearchLessons = []
     let repoSearchReadPlans = []
     let repoSearchSourceReads = []
+    let repoSearchCapabilityDrafts = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -1355,6 +1468,15 @@ export async function readGitHubMission({
         repoSearchSourceReads = plannedReads.reads
         stages.push(...plannedReads.stages)
       }
+      repoSearchCapabilityDrafts = synthesizeRepoSearchCapabilityDrafts(repoSearchLessons, repoSearchReadPlans, repoSearchSourceReads)
+      if (repoSearchCapabilityDrafts.length) {
+        stages.push({
+          tool: 'github.search.capability-draft.synthesize',
+          status: 'ok',
+          url: 'github://search/capability-drafts',
+          summary: `已形成 ${repoSearchCapabilityDrafts.length} 个 Vela 本地能力草案。`,
+        })
+      }
     } else {
       const reason = failureText(searchResult, 'github.search.repositories')
       failures.push({ tool: 'github.search.repositories', url: searchUrl, reason, status: searchResult.status })
@@ -1373,6 +1495,7 @@ export async function readGitHubMission({
       repoSearchLessons,
       repoSearchReadPlans,
       repoSearchSourceReads,
+      repoSearchCapabilityDrafts,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -1401,6 +1524,7 @@ export async function readGitHubMission({
       repoSearchLessons,
       repoSearchReadPlans,
       repoSearchSourceReads,
+      repoSearchCapabilityDrafts,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -1415,6 +1539,7 @@ export async function readGitHubMission({
         ...repoSearchLessons.map((lesson, index) => `候选吸收建议 ${index + 1}：${repoSearchLessonLine(lesson, index)} ${lesson.htmlUrl}`.trim()),
         ...repoSearchReadPlans.map((plan, index) => `候选读取计划 ${index + 1}：${repoSearchReadPlanLine(plan, index)} ${plan.htmlUrl}`.trim()),
         ...repoSearchSourceReads.map((read, index) => `候选源码证据 ${index + 1}：${repoSearchSourceReadLine(read, index)} ${read.htmlUrl}`.trim()),
+        ...repoSearchCapabilityDrafts.map((draft, index) => `Vela 能力草案 ${index + 1}：${repoSearchCapabilityDraftLine(draft, index)} ${draft.htmlUrl}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),
