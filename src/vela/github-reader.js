@@ -773,6 +773,99 @@ function repoSearchLessonLine(lesson = {}, index = 0) {
   return [name, `fit=${lesson.fit || 'unknown'}`, ideas, next, risk].filter(Boolean).join('；')
 }
 
+function readPlanReasonForPath(path = '', lesson = {}) {
+  const normalized = asText(path).toLowerCase()
+  if (isKnownManifestPath(path)) return '确认依赖、运行方式和可迁移模块边界'
+  if (/agent|planner|task|loop/.test(normalized)) return '确认 Agent 执行循环、任务状态和恢复策略'
+  if (/browser|playwright|page|dom|web/.test(normalized)) return '确认浏览器观察、动作执行和失败恢复接口'
+  if (/mcp|tool|server|registry/.test(normalized)) return '确认工具注册、工具调用和外部能力桥接方式'
+  if (/memory|context|recall/.test(normalized)) return '确认上下文注入、记忆召回和来源记录方式'
+  if (/permission|policy|guard|security|sandbox/.test(normalized)) return '确认权限、守卫和安全边界实现'
+  if (/^src\/(?:index|main|app|server)\./.test(normalized) || /^(?:index|main|app)\./.test(normalized)) {
+    return '确认项目入口、模块装配和核心执行路径'
+  }
+  return lesson.capabilityIdeas?.length
+    ? `围绕「${lesson.capabilityIdeas[0].split('：')[0]}」继续验证源码实现`
+    : '补足源码实现证据'
+}
+
+function candidateReadTargets(analysis = {}, lesson = {}) {
+  const targets = []
+  const pushTarget = ({ path, type = 'file', priority = 50, signal = '' } = {}) => {
+    const cleanedPath = cleanGitHubPath(path)
+    if (!cleanedPath || targets.some(item => item.path === cleanedPath)) return
+    targets.push({
+      path: cleanedPath,
+      type,
+      priority,
+      risk: 'Read',
+      reason: readPlanReasonForPath(cleanedPath, lesson),
+      sourceSignal: signal,
+    })
+  }
+
+  if (analysis.entryPath) {
+    pushTarget({ path: analysis.entryPath, priority: 1, signal: 'entry-or-manifest' })
+  }
+
+  normalizeArray(analysis.sourceItems)
+    .filter(item => item.type === 'file')
+    .map(item => item.path || item.name)
+    .filter(path => Number.isFinite(keySourceScore(path)) || /agent|browser|playwright|mcp|tool|server|memory|context|permission|guard|policy/i.test(path))
+    .sort((left, right) => {
+      const leftScore = keySourceScore(left)
+      const rightScore = keySourceScore(right)
+      const normalizedLeft = Number.isFinite(leftScore) ? leftScore : 999
+      const normalizedRight = Number.isFinite(rightScore) ? rightScore : 999
+      return normalizedLeft - normalizedRight || left.localeCompare(right)
+    })
+    .slice(0, 4)
+    .forEach((path, index) => pushTarget({ path, priority: 10 + index, signal: 'source-match' }))
+
+  normalizeArray(analysis.rootItems)
+    .filter(item => item.type === 'dir' && /^(?:docs|examples|src|packages|apps)$/i.test(item.path || item.name))
+    .slice(0, 3)
+    .forEach((item, index) => pushTarget({
+      path: item.path || item.name,
+      type: 'dir',
+      priority: 40 + index,
+      signal: 'supporting-directory',
+    }))
+
+  return targets
+    .sort((left, right) => left.priority - right.priority || left.path.localeCompare(right.path))
+    .slice(0, 6)
+}
+
+function repoSearchReadPlanForAnalysis(analysis = {}, lesson = {}, index = 0) {
+  const candidate = lesson.candidate || analysis.fullName || `候选 ${index + 1}`
+  const targets = candidateReadTargets(analysis, lesson)
+  return {
+    candidate,
+    htmlUrl: asText(analysis.htmlUrl || lesson.htmlUrl, ''),
+    status: targets.length ? 'ready' : 'needs-more-discovery',
+    risk: 'Read',
+    targets,
+    nextCommand: targets.length
+      ? `继续只读读取 ${candidate} 的 ${targets.slice(0, 3).map(item => item.path).join('、')}，验证可迁移实现。`
+      : `先展开 ${candidate} 的 src/docs/examples 目录，再生成源码读取计划。`,
+  }
+}
+
+function synthesizeRepoSearchReadPlans(analyses = [], lessons = []) {
+  return normalizeArray(analyses)
+    .filter(analysis => analysis?.fullName)
+    .map((analysis, index) => repoSearchReadPlanForAnalysis(analysis, normalizeArray(lessons)[index] || {}, index))
+}
+
+function repoSearchReadPlanLine(plan = {}, index = 0) {
+  const name = plan.candidate || `候选 ${index + 1}`
+  const targets = plan.targets?.length
+    ? `目标：${plan.targets.map(item => `${item.path}(${item.reason})`).join('；')}`
+    : '目标待发现'
+  return [name, `status=${plan.status || 'unknown'}`, targets, plan.nextCommand].filter(Boolean).join('；')
+}
+
 async function analyzeSearchCandidate({
   repo,
   fetchJson,
@@ -957,6 +1050,7 @@ function summarizeGitHubRead({
   repoSearchResults = [],
   repoSearchAnalyses = [],
   repoSearchLessons = [],
+  repoSearchReadPlans = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -994,7 +1088,10 @@ function summarizeGitHubRead({
     const lessonsSummary = repoSearchLessons.length
       ? `已提炼 ${repoSearchLessons.length} 条 Vela 开源吸收建议：${repoSearchLessons.map(repoSearchLessonLine).join('；')}。`
       : ''
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const readPlanSummary = repoSearchReadPlans.length
+      ? `已生成 ${repoSearchReadPlans.length} 条后续源码读取计划：${repoSearchReadPlans.map(repoSearchReadPlanLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -1083,6 +1180,7 @@ export async function readGitHubMission({
     let repoSearchResults = []
     let repoSearchAnalyses = []
     let repoSearchLessons = []
+    let repoSearchReadPlans = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -1110,12 +1208,21 @@ export async function readGitHubMission({
         stages.push(...candidate.stages)
       }
       repoSearchLessons = synthesizeRepoSearchLessons(repoSearchAnalyses)
+      repoSearchReadPlans = synthesizeRepoSearchReadPlans(repoSearchAnalyses, repoSearchLessons)
       if (repoSearchLessons.length) {
         stages.push({
           tool: 'github.search.lessons.synthesize',
           status: 'ok',
           url: 'github://search/lessons',
           summary: `已从 ${repoSearchLessons.length} 个候选仓库提炼 Vela 开源吸收建议。`,
+        })
+      }
+      if (repoSearchReadPlans.length) {
+        stages.push({
+          tool: 'github.search.read-plan.synthesize',
+          status: 'ok',
+          url: 'github://search/read-plan',
+          summary: `已生成 ${repoSearchReadPlans.length} 条后续源码读取计划。`,
         })
       }
     } else {
@@ -1134,6 +1241,7 @@ export async function readGitHubMission({
       repoSearchResults,
       repoSearchAnalyses,
       repoSearchLessons,
+      repoSearchReadPlans,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -1160,6 +1268,7 @@ export async function readGitHubMission({
       repoSearchResults,
       repoSearchAnalyses,
       repoSearchLessons,
+      repoSearchReadPlans,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -1172,6 +1281,7 @@ export async function readGitHubMission({
         ...repoSearchResults.map((repo, index) => `候选仓库 ${index + 1}：${searchRepoLine(repo, index)} ${repo.htmlUrl}`.trim()),
         ...repoSearchAnalyses.map((analysis, index) => `候选深读 ${index + 1}：${searchCandidateAnalysisLine(analysis, index)} ${analysis.htmlUrl}`.trim()),
         ...repoSearchLessons.map((lesson, index) => `候选吸收建议 ${index + 1}：${repoSearchLessonLine(lesson, index)} ${lesson.htmlUrl}`.trim()),
+        ...repoSearchReadPlans.map((plan, index) => `候选读取计划 ${index + 1}：${repoSearchReadPlanLine(plan, index)} ${plan.htmlUrl}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),
