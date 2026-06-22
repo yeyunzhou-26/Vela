@@ -15,6 +15,7 @@ Files:
 - `src/vela/capability-registry.js`
 - `src/vela/capability-adapters.js`
 - `src/vela/desktop-adapter-bridge.js`
+- `src/vela/wechat-ilink-adapter.js`
 - `src/vela/github-reader.js`
 - `src/api.js`
 - `src/test-vela-mission.js`

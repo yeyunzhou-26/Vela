@@ -1,3 +1,5 @@
+import { preflightWechatIlinkAdapter, wechatIlinkEvidence } from './wechat-ilink-adapter.js'
+
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
   return text || fallback
@@ -53,7 +55,10 @@ export function describeDesktopAdapter(target = {}, capability = 'screen-context
   const normalized = normalizeDesktopAdapterTarget(target)
   const capabilityId = normalizedCapabilityId(capability, 'screen-context')
   const enabled = enabledRealAdapterIds()
-  const realAdapterReady = enabled.has(normalized.appId) || enabled.has('*')
+  const preflight = normalized.appId === 'wechat' && capabilityId === 'messages.confirmed-send'
+    ? preflightWechatIlinkAdapter({ capability: capabilityId })
+    : null
+  const realAdapterReady = enabled.has(normalized.appId) || enabled.has('*') || Boolean(preflight?.available)
   const supported = normalized.catalogEntry.supportedCapabilities.includes(capabilityId)
   const available = realAdapterReady && supported
   const adapterStatus = available ? 'real-adapter-ready' : 'real-adapter-pending'
@@ -69,24 +74,30 @@ export function describeDesktopAdapter(target = {}, capability = 'screen-context
     adapterStatus,
     available,
     supported,
+    preflight,
+    protocol: preflight?.protocol || '',
     requiredGuards: capabilityId === 'messages.confirmed-send'
       ? ['Screen', 'External message']
       : ['Screen'],
-    missingConnector: supported
+    missingConnector: preflight?.missingConnector || (supported
       ? normalized.catalogEntry.missingConnector
-      : `当前目录没有声明 ${normalized.appName} 的 ${capabilityId} 能力。`,
+      : `当前目录没有声明 ${normalized.appName} 的 ${capabilityId} 能力。`),
     modeSummary: available
       ? `真实${normalized.appName}适配器已可用；执行前仍必须通过对应 Guard。`
-      : `当前为模拟链路；${supported ? normalized.catalogEntry.missingConnector : `未声明 ${capabilityId} 能力。`}`,
+      : `当前为模拟链路；${preflight?.missingConnector || (supported ? normalized.catalogEntry.missingConnector : `未声明 ${capabilityId} 能力。`)}`,
   }
 }
 
 export function desktopAdapterEvidence(adapter = {}) {
-  return [
+  const evidence = [
     `执行模式：${asText(adapter.executionMode, 'simulated')}`,
     `适配器状态：${asText(adapter.adapterStatus, 'real-adapter-pending')}`,
     `真实适配器入口：${asText(adapter.realAdapterEntry)}`,
     `真实适配器可用：${adapter.available ? 'yes' : 'no'}`,
     `适配器缺口：${asText(adapter.missingConnector, '未连接真实桌面自动化适配器。')}`,
   ]
+  if (adapter.preflight?.adapterId === 'wechat-ilink') {
+    evidence.push(...wechatIlinkEvidence(adapter.preflight))
+  }
+  return evidence
 }

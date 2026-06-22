@@ -21,7 +21,24 @@ try {
   const capabilityAdapters = await import('./vela/capability-adapters.js')
   const capabilityRegistry = await import('./vela/capability-registry.js')
   const desktopAdapterBridge = await import('./vela/desktop-adapter-bridge.js')
+  const wechatIlinkAdapter = await import('./vela/wechat-ilink-adapter.js')
   const githubReader = await import('./vela/github-reader.js')
+
+  const wechatIlinkPreflight = wechatIlinkAdapter.preflightWechatIlinkAdapter({ env: {} })
+  assert(wechatIlinkPreflight.packageAvailable === true, 'WeChat iLink preflight detects installed client package')
+  assert(wechatIlinkPreflight.credentialStatus === 'missing', 'WeChat iLink preflight reports missing credentials')
+  assert(wechatIlinkPreflight.missingCredentials.includes('VELA_WECHAT_ILINK_TOKEN'), 'WeChat iLink preflight lists missing token')
+  assert(wechatIlinkPreflight.recipientStatus === 'missing', 'WeChat iLink preflight requires a recipient user id for send')
+  assert(wechatIlinkAdapter.wechatIlinkEvidence(wechatIlinkPreflight).some(item => item.includes('微信库可用：yes')), 'WeChat iLink evidence records package availability')
+  const readyWechatIlink = wechatIlinkAdapter.preflightWechatIlinkAdapter({
+    env: {
+      VELA_WECHAT_ILINK_TOKEN: 'test-token',
+      VELA_WECHAT_ILINK_ACCOUNT_ID: 'test-account',
+      VELA_WECHAT_ILINK_DEFAULT_TO_USER_ID: 'test-user',
+    },
+  })
+  assert(readyWechatIlink.available === true, 'WeChat iLink preflight can become available with credentials and recipient')
+  assert(readyWechatIlink.executionMode === 'live', 'WeChat iLink preflight marks configured adapter live')
 
   const wechatScreenAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'screen-context')
   assert(wechatScreenAdapter.realAdapterEntry === 'desktop://adapters/wechat/screen-context', 'desktop bridge describes WeChat screen-context entrypoint')
@@ -32,6 +49,8 @@ try {
   const wechatSendAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'messages.confirmed-send')
   assert(wechatSendAdapter.realAdapterEntry === 'desktop://adapters/wechat/messages.confirmed-send', 'desktop bridge describes WeChat confirmed-send entrypoint')
   assert(wechatSendAdapter.requiredGuards.includes('External message'), 'desktop bridge keeps external-message guard on send adapter')
+  assert(wechatSendAdapter.preflight?.adapterId === 'wechat-ilink', 'desktop bridge attaches WeChat iLink preflight to send adapter')
+  assert(desktopAdapterBridge.desktopAdapterEvidence(wechatSendAdapter).some(item => item.includes('微信凭据状态：missing')), 'desktop bridge evidence includes WeChat iLink credential state')
   const previousRealDesktopAdapters = process.env.VELA_REAL_DESKTOP_ADAPTERS
   process.env.VELA_REAL_DESKTOP_ADAPTERS = 'wechat'
   const liveWechatAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'screen-context')
