@@ -733,6 +733,9 @@ function normalizeMcpGithubReadResult(value) {
     issues: normalizeArray(value.issues),
     issueDetail: value.issueDetail || null,
     comments: normalizeArray(value.comments),
+    pullDetail: value.pullDetail || null,
+    pullFiles: normalizeArray(value.pullFiles),
+    pullReviews: normalizeArray(value.pullReviews),
   }
 }
 

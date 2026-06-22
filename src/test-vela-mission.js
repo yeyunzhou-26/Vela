@@ -163,6 +163,98 @@ try {
   assert(githubIssueDetailResult.issueDetail.bodyExcerpt.includes('single issue body'), 'GitHub reader keeps issue body excerpt')
   assert(githubIssueDetailResult.comments.at(-1).bodyExcerpt.includes('comments in evidence'), 'GitHub reader keeps comment excerpt')
   assert(githubIssueDetailResult.summary.includes('Read a concrete issue with comments'), 'GitHub reader summarizes issue detail')
+  const githubPullTarget = githubReader.extractGitHubTarget('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/pull/13 的改动和 review')
+  assert(githubPullTarget.pullNumber === 13, 'GitHub reader extracts pull request number from PR URL')
+  assert(githubPullTarget.issueNumber === null, 'GitHub reader does not treat PR URL as a plain issue target')
+  const githubPullReadResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/pull/13 的改动和 review',
+      goal: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/pull/13 的改动和 review',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      if (url.includes('/pulls/13/files')) {
+        return [
+          {
+            filename: 'src/vela/github-reader.js',
+            status: 'modified',
+            additions: 42,
+            deletions: 3,
+            changes: 45,
+            blob_url: 'https://github.com/yeyunzhou-26/Vela/blob/pr/src/vela/github-reader.js',
+            patch: '@@ -1,3 +1,6 @@\n+read pull request files',
+          },
+        ]
+      }
+      if (url.includes('/pulls/13/reviews')) {
+        return [
+          {
+            id: 1301,
+            state: 'APPROVED',
+            body: 'Looks safe for read-only PR analysis.',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/pull/13#pullrequestreview-1301',
+            user: { login: 'reviewer' },
+            submitted_at: '2026-06-22T11:00:00Z',
+          },
+        ]
+      }
+      if (url.includes('/issues/13/comments')) {
+        return [
+          {
+            id: 1302,
+            body: 'Please include changed files before summarizing.',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/pull/13#issuecomment-1302',
+            user: { login: 'operator' },
+            created_at: '2026-06-22T11:05:00Z',
+          },
+        ]
+      }
+      if (url.match(/\/pulls\/13$/)) {
+        return {
+          number: 13,
+          title: 'Read pull request files and reviews',
+          state: 'open',
+          html_url: 'https://github.com/yeyunzhou-26/Vela/pull/13',
+          user: { login: 'yeyunzhou-26' },
+          body: 'Vela should read PR metadata, changed files, and review status.',
+          base: { ref: 'main' },
+          head: { ref: 'feat/pr-reader' },
+          mergeable: true,
+          draft: false,
+          additions: 42,
+          deletions: 3,
+          changed_files: 1,
+          commits: 2,
+          comments: 1,
+          review_comments: 0,
+          created_at: '2026-06-22T10:30:00Z',
+          updated_at: '2026-06-22T10:55:00Z',
+        }
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-22T10:30:00Z',
+      }
+    },
+  })
+  assert(githubPullReadResult.ok === true, 'GitHub reader completes pull request detail lookup')
+  assert(githubPullReadResult.mode === 'github-pull-detail', 'GitHub reader records pull detail mode')
+  assert(githubPullReadResult.sourceTools.includes('github.pull.get'), 'GitHub reader records PR detail endpoint')
+  assert(githubPullReadResult.sourceTools.includes('github.pull.files.list'), 'GitHub reader records PR files endpoint')
+  assert(githubPullReadResult.sourceTools.includes('github.pull.reviews.list'), 'GitHub reader records PR reviews endpoint')
+  assert(githubPullReadResult.pullFiles.at(-1).filename === 'src/vela/github-reader.js', 'GitHub reader keeps PR changed file metadata')
+  assert(githubPullReadResult.pullReviews.at(-1).state === 'APPROVED', 'GitHub reader keeps PR review state')
+  assert(githubPullReadResult.summary.includes('Read pull request files and reviews'), 'GitHub reader summarizes PR detail')
+  assert(githubPullReadResult.summary.includes('src/vela/github-reader.js'), 'GitHub reader summarizes PR changed files')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -871,6 +963,105 @@ try {
   assert(githubDetailStages.some(item => item.toolName === 'github.issue.get' && item.result === 'ok'), 'async GitHub issue detail command records detail read stage')
   assert(githubDetailStages.some(item => item.toolName === 'github.issue.comments.list' && item.result === 'ok'), 'async GitHub issue detail command records comments read stage')
   assert(githubDetailStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub issue detail command records skipped write-action stage')
+
+  runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 https://github.com/yeyunzhou-26/Vela/pull/14 的改动文件和 review',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const githubPullReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async ({ url }) => {
+        if (url.includes('/pulls/14/files')) {
+          return [
+            {
+              filename: 'src/vela/capability-adapters.js',
+              status: 'modified',
+              additions: 8,
+              deletions: 1,
+              changes: 9,
+              blob_url: 'https://github.com/yeyunzhou-26/Vela/blob/pr/src/vela/capability-adapters.js',
+              patch: '@@ -700,6 +700,8 @@\n+normalize pull request result',
+            },
+          ]
+        }
+        if (url.includes('/pulls/14/reviews')) {
+          return [
+            {
+              id: 1401,
+              state: 'COMMENTED',
+              body: 'Please verify trace evidence includes changed files.',
+              html_url: 'https://github.com/yeyunzhou-26/Vela/pull/14#pullrequestreview-1401',
+              user: { login: 'reviewer' },
+              submitted_at: '2026-06-22T12:00:00Z',
+            },
+          ]
+        }
+        if (url.includes('/issues/14/comments')) {
+          return [
+            {
+              id: 1402,
+              body: 'The PR should stay read-only until approval.',
+              html_url: 'https://github.com/yeyunzhou-26/Vela/pull/14#issuecomment-1402',
+              user: { login: 'operator' },
+              created_at: '2026-06-22T12:05:00Z',
+            },
+          ]
+        }
+        if (url.match(/\/pulls\/14$/)) {
+          return {
+            number: 14,
+            title: 'Preserve PR context in mission review',
+            state: 'open',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/pull/14',
+            user: { login: 'yeyunzhou-26' },
+            body: 'Mission review should include PR metadata, files, reviews, and comments.',
+            base: { ref: 'main' },
+            head: { ref: 'feat/pr-context' },
+            mergeable: false,
+            draft: true,
+            additions: 8,
+            deletions: 1,
+            changed_files: 1,
+            commits: 1,
+            comments: 1,
+            review_comments: 1,
+            created_at: '2026-06-22T11:45:00Z',
+            updated_at: '2026-06-22T12:10:00Z',
+          }
+        }
+        return {
+          full_name: 'yeyunzhou-26/Vela',
+          name: 'Vela',
+          owner: { login: 'yeyunzhou-26' },
+          html_url: 'https://github.com/yeyunzhou-26/Vela',
+          description: 'Mission-first AI Operating Desk',
+          default_branch: 'main',
+          stargazers_count: 0,
+          forks_count: 0,
+          open_issues_count: 1,
+          visibility: 'public',
+          updated_at: '2026-06-22T11:45:00Z',
+        }
+      },
+    },
+  })
+  assert(githubPullReviewing.state === 'Reviewing', 'async GitHub PR command moves to reviewing')
+  assert(githubPullReviewing.toolCalls.at(-1).result.includes('github.pull.get'), 'async GitHub PR command records pull source tool')
+  assert(githubPullReviewing.toolCalls.at(-1).result.includes('github.pull.files.list'), 'async GitHub PR command records files source tool')
+  assert(githubPullReviewing.toolCalls.at(-1).result.includes('github.pull.reviews.list'), 'async GitHub PR command records reviews source tool')
+  assert(githubPullReviewing.artifacts.at(-1).summary.includes('Preserve PR context in mission review'), 'async GitHub PR command summarizes PR detail')
+  assert(githubPullReviewing.artifacts.at(-1).summary.includes('src/vela/capability-adapters.js'), 'async GitHub PR command summarizes changed files')
+  assert(githubPullReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('pullrequestreview-1401')), 'async GitHub PR command keeps review evidence')
+  const githubPullToolId = githubPullReviewing.toolCalls.at(-1).id
+  const githubPullStages = githubPullReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubPullToolId)
+  assert(githubPullStages.some(item => item.toolName === 'github.pull.get' && item.result === 'ok'), 'async GitHub PR command records pull read stage')
+  assert(githubPullStages.some(item => item.toolName === 'github.pull.files.list' && item.result === 'ok'), 'async GitHub PR command records files read stage')
+  assert(githubPullStages.some(item => item.toolName === 'github.pull.reviews.list' && item.result === 'ok'), 'async GitHub PR command records reviews read stage')
+  assert(githubPullStages.some(item => item.toolName === 'github.issue.comments.list' && item.result === 'ok'), 'async GitHub PR command records issue comments stage')
+  assert(githubPullStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub PR command records skipped write-action stage')
 
   runtime.applyCurrentMissionCommand({
     text: '用 github 工具查看 missing-owner/missing-repo issue',
