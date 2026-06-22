@@ -29,6 +29,13 @@ function unique(values = []) {
   })
 }
 
+function slugKey(value = '', fallback = 'item') {
+  const slug = asText(value).toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || fallback
+}
+
 function missionText(mission = {}, input = {}) {
   return [
     mission.title,
@@ -1087,6 +1094,60 @@ function repoSearchCapabilityDraftLine(draft = {}, index = 0) {
   return [name, `status=${draft.status || 'unknown'}`, `confidence=${draft.sourceConfidence || 'unknown'}`, targets, evidence, draft.permissionBoundary].filter(Boolean).join('；')
 }
 
+function implementationKeyForCapabilityDraft(draft = {}, index = 0) {
+  const capability = asText(draft.capability || draft.title)
+  if (/浏览器|网页/.test(capability)) return `vela-build-browser-workspace-${index + 1}`
+  if (/Agent|执行循环|任务/.test(capability)) return `vela-build-agent-loop-${index + 1}`
+  if (/工具|MCP|桥接/.test(capability)) return `vela-build-tool-bridge-${index + 1}`
+  if (/上下文|记忆/.test(capability)) return `vela-build-context-memory-${index + 1}`
+  if (/权限|守卫|安全/.test(capability)) return `vela-build-permission-guard-${index + 1}`
+  return `vela-build-${slugKey(capability, 'capability')}-${index + 1}`
+}
+
+function acceptanceCriteriaForImplementationTicket(draft = {}) {
+  return [
+    `聊天入口能触发「${draft.capability || '本地能力'}」，用户首屏只看到自然结果和必要确认。`,
+    'toolCall、artifact、tool stage、reviewCheck 同步记录来源和执行边界。',
+    `目标文件覆盖：${normalizeArray(draft.localTargets).slice(0, 3).join('、') || '待定'}。`,
+    '写入、发送、删除、登录凭据等外部副作用必须进入 Guard；只读步骤保留证据。',
+  ]
+}
+
+function implementationTicketForCapabilityDraft(draft = {}, index = 0) {
+  const ready = draft.status === 'draft-ready'
+  const targetFiles = normalizeArray(draft.localTargets)
+  const firstTarget = targetFiles[0] || 'src/vela/capability-adapters.js'
+  return {
+    id: implementationKeyForCapabilityDraft(draft, index),
+    title: `落地 ${draft.capability || 'Vela 本地能力'}`,
+    priority: ready && draft.sourceConfidence === 'high' ? index + 1 : index + 10,
+    status: ready ? 'ready-for-implementation' : 'needs-source-evidence',
+    sourceCandidate: asText(draft.candidate, ''),
+    sourcePaths: normalizeArray(draft.sourcePaths),
+    targetFiles,
+    nextCommand: ready
+      ? `开始实现「${draft.capability}」：先改 ${firstTarget}，再补 mission runtime 测试和中文聊天入口验收。`
+      : `继续只读补证据后再实现「${draft.capability}」：优先读取 ${normalizeArray(draft.sourcePaths)[0] || 'src/docs/examples'}。`,
+    implementationSteps: normalizeArray(draft.implementationSteps),
+    acceptanceCriteria: acceptanceCriteriaForImplementationTicket(draft),
+    guardrail: asText(draft.permissionBoundary, '外部副作用必须进入 Guard。'),
+    evidence: normalizeArray(draft.sourceEvidence).slice(0, 4),
+  }
+}
+
+function synthesizeRepoSearchImplementationQueue(capabilityDrafts = []) {
+  return normalizeArray(capabilityDrafts)
+    .map(implementationTicketForCapabilityDraft)
+    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))
+}
+
+function repoSearchImplementationQueueLine(ticket = {}, index = 0) {
+  const title = ticket.title || `实施票 ${index + 1}`
+  const targets = ticket.targetFiles?.length ? `目标：${ticket.targetFiles.slice(0, 3).join('、')}` : ''
+  const sources = ticket.sourcePaths?.length ? `源码：${ticket.sourcePaths.slice(0, 3).join('、')}` : ''
+  return [title, `status=${ticket.status || 'unknown'}`, `priority=${ticket.priority ?? index + 1}`, targets, sources, ticket.nextCommand].filter(Boolean).join('；')
+}
+
 async function analyzeSearchCandidate({
   repo,
   fetchJson,
@@ -1274,6 +1335,7 @@ function summarizeGitHubRead({
   repoSearchReadPlans = [],
   repoSearchSourceReads = [],
   repoSearchCapabilityDrafts = [],
+  repoSearchImplementationQueue = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -1320,7 +1382,10 @@ function summarizeGitHubRead({
     const draftSummary = repoSearchCapabilityDrafts.length
       ? `已形成 ${repoSearchCapabilityDrafts.length} 个 Vela 本地能力草案：${repoSearchCapabilityDrafts.map(repoSearchCapabilityDraftLine).join('；')}。`
       : ''
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${sourceReadSummary}${draftSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const implementationSummary = repoSearchImplementationQueue.length
+      ? `已排出 ${repoSearchImplementationQueue.length} 张 Vela 本地实施票：${repoSearchImplementationQueue.map(repoSearchImplementationQueueLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${sourceReadSummary}${draftSummary}${implementationSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -1413,6 +1478,7 @@ export async function readGitHubMission({
     let repoSearchReadPlans = []
     let repoSearchSourceReads = []
     let repoSearchCapabilityDrafts = []
+    let repoSearchImplementationQueue = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -1477,6 +1543,15 @@ export async function readGitHubMission({
           summary: `已形成 ${repoSearchCapabilityDrafts.length} 个 Vela 本地能力草案。`,
         })
       }
+      repoSearchImplementationQueue = synthesizeRepoSearchImplementationQueue(repoSearchCapabilityDrafts)
+      if (repoSearchImplementationQueue.length) {
+        stages.push({
+          tool: 'github.search.implementation-queue.synthesize',
+          status: 'ok',
+          url: 'github://search/implementation-queue',
+          summary: `已排出 ${repoSearchImplementationQueue.length} 张 Vela 本地实施票。`,
+        })
+      }
     } else {
       const reason = failureText(searchResult, 'github.search.repositories')
       failures.push({ tool: 'github.search.repositories', url: searchUrl, reason, status: searchResult.status })
@@ -1496,6 +1571,7 @@ export async function readGitHubMission({
       repoSearchReadPlans,
       repoSearchSourceReads,
       repoSearchCapabilityDrafts,
+      repoSearchImplementationQueue,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -1525,6 +1601,7 @@ export async function readGitHubMission({
       repoSearchReadPlans,
       repoSearchSourceReads,
       repoSearchCapabilityDrafts,
+      repoSearchImplementationQueue,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -1540,6 +1617,7 @@ export async function readGitHubMission({
         ...repoSearchReadPlans.map((plan, index) => `候选读取计划 ${index + 1}：${repoSearchReadPlanLine(plan, index)} ${plan.htmlUrl}`.trim()),
         ...repoSearchSourceReads.map((read, index) => `候选源码证据 ${index + 1}：${repoSearchSourceReadLine(read, index)} ${read.htmlUrl}`.trim()),
         ...repoSearchCapabilityDrafts.map((draft, index) => `Vela 能力草案 ${index + 1}：${repoSearchCapabilityDraftLine(draft, index)} ${draft.htmlUrl}`.trim()),
+        ...repoSearchImplementationQueue.map((ticket, index) => `Vela 实施队列 ${index + 1}：${repoSearchImplementationQueueLine(ticket, index)} ${ticket.sourceCandidate}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),
