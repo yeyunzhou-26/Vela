@@ -670,6 +670,109 @@ function searchCandidateAnalysisLine(analysis = {}, index = 0) {
   return [name, readme, entry, root, source, failures].filter(Boolean).join('；')
 }
 
+function lessonSearchText(analysis = {}) {
+  return [
+    analysis.fullName,
+    analysis.description,
+    analysis.language,
+    ...normalizeArray(analysis.topics),
+    analysis.readme?.contentExcerpt,
+    analysis.entryFile?.contentExcerpt,
+    ...normalizeArray(analysis.rootItems).map(item => item.path || item.name),
+    ...normalizeArray(analysis.sourceItems).map(item => item.path || item.name),
+  ].map(item => asText(item).toLowerCase()).filter(Boolean).join(' ')
+}
+
+function lessonSignalsForAnalysis(analysis = {}) {
+  const signals = []
+  if (analysis.stars) signals.push(`${analysis.stars} stars`)
+  if (analysis.forks) signals.push(`${analysis.forks} forks`)
+  if (analysis.language) signals.push(`语言 ${analysis.language}`)
+  if (analysis.license) signals.push(`许可证 ${analysis.license}`)
+  if (analysis.topics?.length) signals.push(`topics: ${analysis.topics.slice(0, 4).join(', ')}`)
+  if (analysis.readme?.contentExcerpt) signals.push('README 可读')
+  if (analysis.entryPath) signals.push(`入口 ${analysis.entryPath}`)
+  if (analysis.sourceItems?.length) signals.push(`源码线索 ${analysis.sourceItems.length} 项`)
+  if (analysis.archived) signals.push('仓库已归档')
+  return signals
+}
+
+function capabilityIdeasForAnalysis(analysis = {}) {
+  const text = lessonSearchText(analysis)
+  const ideas = []
+  if (/(?:browser|playwright|website|web automation|网页|浏览器)/i.test(text)) {
+    ideas.push('浏览器操作空间：把页面观察、动作执行、失败恢复沉淀为 Vela Operator 的网页任务能力')
+  }
+  if (/(?:agent|agents|autonomous|task loop|action space|智能体)/i.test(text)) {
+    ideas.push('Agent 执行循环：提取任务分解、动作选择、结果验证和恢复循环，服务长任务自治')
+  }
+  if (/(?:mcp|model context protocol|tool server|tool registry|server)/i.test(text)) {
+    ideas.push('工具桥接：借鉴 MCP/server 注册、工具发现和外部工具路由，扩展 Vela 工具生态')
+  }
+  if (/(?:memory|context|recall|knowledge|上下文|记忆)/i.test(text)) {
+    ideas.push('上下文记忆：吸收上下文注入、可追溯来源和召回质量检查的做法')
+  }
+  if (/(?:permission|policy|guard|security|sandbox|权限|安全)/i.test(text)) {
+    ideas.push('权限与守卫：强化工具风险分类、执行边界和用户确认流程')
+  }
+  if (!ideas.length) {
+    ideas.push('项目拆解：先从 README、manifest 和入口文件识别核心模块，再决定是否进入源码级对照')
+  }
+  return ideas.slice(0, 4)
+}
+
+function risksForAnalysis(analysis = {}) {
+  const risks = []
+  if (analysis.archived) risks.push('仓库已归档，不能直接作为长期依赖')
+  if (!analysis.license) risks.push('缺少明确许可证信息，复用前需要人工确认')
+  if (!analysis.readme?.contentExcerpt) risks.push('README 未读到，能力判断证据不足')
+  if (!analysis.entryFile?.contentExcerpt) risks.push('入口/manifest 未读到，源码结构还需要继续确认')
+  if (analysis.failures?.length) risks.push(`深读有局部失败 ${analysis.failures.length} 项`)
+  return risks
+}
+
+function repoSearchLessonForAnalysis(analysis = {}, index = 0) {
+  const ideas = capabilityIdeasForAnalysis(analysis)
+  const signals = lessonSignalsForAnalysis(analysis)
+  const risks = risksForAnalysis(analysis)
+  const evidencePaths = unique([
+    analysis.readme?.path,
+    analysis.entryFile?.path,
+    ...normalizeArray(analysis.sourceItems).slice(0, 4).map(item => item.path || item.name),
+  ])
+  const evidence = [
+    analysis.readme?.contentExcerpt ? `README：${compactText(analysis.readme.contentExcerpt, 220)}` : '',
+    analysis.entryFile?.contentExcerpt ? `${analysis.entryFile.path || analysis.entryPath}：${compactText(analysis.entryFile.contentExcerpt, 180)}` : '',
+    evidencePaths.length ? `文件线索：${evidencePaths.join(', ')}` : '',
+  ].filter(Boolean)
+  return {
+    candidate: analysis.fullName || `候选 ${index + 1}`,
+    htmlUrl: asText(analysis.htmlUrl, ''),
+    fit: ideas.length >= 2 && !analysis.archived ? 'high' : 'medium',
+    signals,
+    capabilityIdeas: ideas,
+    risks,
+    nextAction: analysis.entryPath
+      ? `继续读取 ${analysis.fullName} 的 ${analysis.entryPath} 相关实现，提炼可迁移的接口和执行循环。`
+      : `继续读取 ${analysis.fullName} 的 docs/examples/src 目录，补足实现证据。`,
+    evidence,
+  }
+}
+
+function synthesizeRepoSearchLessons(analyses = []) {
+  return normalizeArray(analyses)
+    .filter(analysis => analysis?.fullName)
+    .map(repoSearchLessonForAnalysis)
+}
+
+function repoSearchLessonLine(lesson = {}, index = 0) {
+  const name = lesson.candidate || `候选 ${index + 1}`
+  const ideas = lesson.capabilityIdeas?.length ? `能力启发：${lesson.capabilityIdeas.join('；')}` : ''
+  const next = lesson.nextAction ? `下一步：${lesson.nextAction}` : ''
+  const risk = lesson.risks?.length ? `风险：${lesson.risks.join('；')}` : ''
+  return [name, `fit=${lesson.fit || 'unknown'}`, ideas, next, risk].filter(Boolean).join('；')
+}
+
 async function analyzeSearchCandidate({
   repo,
   fetchJson,
@@ -684,6 +787,13 @@ async function analyzeSearchCandidate({
   const analysis = {
     fullName,
     htmlUrl: asText(repo.htmlUrl, owner && name ? `https://github.com/${owner}/${name}` : ''),
+    description: asText(repo.description, ''),
+    language: asText(repo.language, ''),
+    topics: normalizeArray(repo.topics).map(item => asText(item)).filter(Boolean),
+    license: asText(repo.license, ''),
+    stars: Number(repo.stars || 0),
+    forks: Number(repo.forks || 0),
+    archived: repo.archived === true,
     readme: null,
     rootItems: [],
     sourceItems: [],
@@ -846,6 +956,7 @@ function summarizeGitHubRead({
   repoSearchRequest = null,
   repoSearchResults = [],
   repoSearchAnalyses = [],
+  repoSearchLessons = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -880,7 +991,10 @@ function summarizeGitHubRead({
     const analysisSummary = repoSearchAnalyses.length
       ? `已深读 ${repoSearchAnalyses.length} 个候选：${repoSearchAnalyses.map(searchCandidateAnalysisLine).join('；')}。`
       : ''
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const lessonsSummary = repoSearchLessons.length
+      ? `已提炼 ${repoSearchLessons.length} 条 Vela 开源吸收建议：${repoSearchLessons.map(repoSearchLessonLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -968,6 +1082,7 @@ export async function readGitHubMission({
     const searchResult = await readJson(fetchJson, { url: searchUrl, headers, signal })
     let repoSearchResults = []
     let repoSearchAnalyses = []
+    let repoSearchLessons = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -994,6 +1109,15 @@ export async function readGitHubMission({
         repoSearchAnalyses.push(candidate.analysis)
         stages.push(...candidate.stages)
       }
+      repoSearchLessons = synthesizeRepoSearchLessons(repoSearchAnalyses)
+      if (repoSearchLessons.length) {
+        stages.push({
+          tool: 'github.search.lessons.synthesize',
+          status: 'ok',
+          url: 'github://search/lessons',
+          summary: `已从 ${repoSearchLessons.length} 个候选仓库提炼 Vela 开源吸收建议。`,
+        })
+      }
     } else {
       const reason = failureText(searchResult, 'github.search.repositories')
       failures.push({ tool: 'github.search.repositories', url: searchUrl, reason, status: searchResult.status })
@@ -1009,6 +1133,7 @@ export async function readGitHubMission({
       repoSearchRequest,
       repoSearchResults,
       repoSearchAnalyses,
+      repoSearchLessons,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -1034,6 +1159,7 @@ export async function readGitHubMission({
       repoSearchRequest,
       repoSearchResults,
       repoSearchAnalyses,
+      repoSearchLessons,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -1045,6 +1171,7 @@ export async function readGitHubMission({
         ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
         ...repoSearchResults.map((repo, index) => `候选仓库 ${index + 1}：${searchRepoLine(repo, index)} ${repo.htmlUrl}`.trim()),
         ...repoSearchAnalyses.map((analysis, index) => `候选深读 ${index + 1}：${searchCandidateAnalysisLine(analysis, index)} ${analysis.htmlUrl}`.trim()),
+        ...repoSearchLessons.map((lesson, index) => `候选吸收建议 ${index + 1}：${repoSearchLessonLine(lesson, index)} ${lesson.htmlUrl}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),
