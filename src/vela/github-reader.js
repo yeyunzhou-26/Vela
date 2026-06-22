@@ -6,6 +6,7 @@ const DEFAULT_PR_REVIEW_LIMIT = 5
 const DEFAULT_CONTENT_ENTRY_LIMIT = 20
 const DEFAULT_REPO_SEARCH_LIMIT = 5
 const DEFAULT_REPO_ANALYSIS_LIMIT = 2
+const DEFAULT_REPO_SOURCE_READ_LIMIT = 4
 const BODY_EXCERPT_LENGTH = 360
 const CONTENT_EXCERPT_LENGTH = 1600
 
@@ -866,6 +867,118 @@ function repoSearchReadPlanLine(plan = {}, index = 0) {
   return [name, `status=${plan.status || 'unknown'}`, targets, plan.nextCommand].filter(Boolean).join('；')
 }
 
+function sourceReadTargetsForPlans(plans = [], analyses = [], sourceReadLimit = DEFAULT_REPO_SOURCE_READ_LIMIT) {
+  const parsedLimit = Number(sourceReadLimit)
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.max(0, Math.min(Math.floor(parsedLimit), 12))
+    : DEFAULT_REPO_SOURCE_READ_LIMIT
+  if (!limit) return []
+  const taken = new Set()
+  const targets = []
+  for (const [planIndex, plan] of normalizeArray(plans).entries()) {
+    const analysis = normalizeArray(analyses)[planIndex] || {}
+    const alreadyRead = new Set([
+      cleanGitHubPath(analysis.readme?.path),
+      cleanGitHubPath(analysis.entryPath),
+      cleanGitHubPath(analysis.entryFile?.path),
+    ].filter(Boolean))
+    for (const target of normalizeArray(plan.targets)) {
+      const path = cleanGitHubPath(target.path)
+      const key = `${plan.candidate}/${path}`.toLowerCase()
+      if (!path || taken.has(key) || alreadyRead.has(path)) continue
+      if (target.type === 'dir' && path === 'src' && analysis.sourceItems?.length) continue
+      taken.add(key)
+      targets.push({ plan, target: { ...target, path }, analysis })
+      if (targets.length >= limit) return targets
+    }
+  }
+  return targets
+}
+
+function compactPlannedSourceRead({ plan = {}, target = {}, result = {}, analysis = {} } = {}) {
+  const detail = result.compacted?.detail || null
+  const items = normalizeArray(result.compacted?.items)
+  return {
+    candidate: plan.candidate || analysis.fullName || '',
+    htmlUrl: asText(plan.htmlUrl || analysis.htmlUrl, ''),
+    path: asText(target.path, ''),
+    type: asText(target.type, detail ? 'file' : 'dir'),
+    risk: 'Read',
+    reason: asText(target.reason, ''),
+    sourceSignal: asText(target.sourceSignal, ''),
+    ok: result.ok === true,
+    contentDetail: detail,
+    contentItems: items,
+    contentTotalItems: Number(result.compacted?.totalItems || items.length || 0),
+    contentTruncated: result.compacted?.truncated === true,
+    failure: result.failure || null,
+  }
+}
+
+async function readPlannedSourceTargets({
+  plans = [],
+  analyses = [],
+  fetchJson,
+  headers,
+  signal,
+  contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
+  sourceReadLimit = DEFAULT_REPO_SOURCE_READ_LIMIT,
+} = {}) {
+  const reads = []
+  const stages = []
+  const targets = sourceReadTargetsForPlans(plans, analyses, sourceReadLimit)
+  for (const item of targets) {
+    const { owner, name } = splitFullName(item.plan.candidate || item.analysis.fullName)
+    if (!owner || !name) {
+      const reason = '候选仓库缺少 owner/name，无法执行源码读取计划'
+      const failure = { tool: 'github.search.planned-source.read', url: 'github://search/planned-source', reason, status: 0 }
+      reads.push(compactPlannedSourceRead({
+        plan: item.plan,
+        target: item.target,
+        analysis: item.analysis,
+        result: { ok: false, failure, compacted: { detail: null, items: [], totalItems: 0, truncated: false } },
+      }))
+      stages.push({
+        tool: 'github.search.planned-source.read',
+        status: 'failed',
+        url: failure.url,
+        summary: reason,
+        reason,
+      })
+      continue
+    }
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeGitHubPath(item.target.path)}`
+    const result = await readSearchCandidateContent({
+      fetchJson,
+      headers,
+      signal,
+      url,
+      tool: 'github.search.planned-source.read',
+      pathLabel: item.target.path,
+      request: { path: item.target.path, kind: item.target.type === 'dir' ? 'directory' : 'file' },
+      entryLimit: contentEntryLimit,
+    })
+    stages.push(result.stage)
+    reads.push(compactPlannedSourceRead({
+      plan: item.plan,
+      target: item.target,
+      analysis: item.analysis,
+      result,
+    }))
+  }
+  return { reads, stages }
+}
+
+function repoSearchSourceReadLine(read = {}, index = 0) {
+  const name = read.candidate || `候选 ${index + 1}`
+  const status = read.ok ? 'ok' : 'failed'
+  const detail = read.contentDetail
+    ? `摘录：${compactText(read.contentDetail.contentExcerpt, 180)}`
+    : (read.contentItems?.length ? `目录项：${read.contentItems.slice(0, 6).map(item => item.path || item.name).join(', ')}` : '')
+  const failure = read.failure?.reason ? `失败：${read.failure.reason}` : ''
+  return [name, read.path, `status=${status}`, read.reason, detail, failure].filter(Boolean).join('；')
+}
+
 async function analyzeSearchCandidate({
   repo,
   fetchJson,
@@ -1051,6 +1164,7 @@ function summarizeGitHubRead({
   repoSearchAnalyses = [],
   repoSearchLessons = [],
   repoSearchReadPlans = [],
+  repoSearchSourceReads = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -1091,7 +1205,10 @@ function summarizeGitHubRead({
     const readPlanSummary = repoSearchReadPlans.length
       ? `已生成 ${repoSearchReadPlans.length} 条后续源码读取计划：${repoSearchReadPlans.map(repoSearchReadPlanLine).join('；')}。`
       : ''
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const sourceReadSummary = repoSearchSourceReads.length
+      ? `已按计划读取 ${repoSearchSourceReads.length} 个源码目标：${repoSearchSourceReads.map(repoSearchSourceReadLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${lessonsSummary}${readPlanSummary}${sourceReadSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -1157,6 +1274,7 @@ export async function readGitHubMission({
   contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
   repoSearchLimit = DEFAULT_REPO_SEARCH_LIMIT,
   repoAnalysisLimit = DEFAULT_REPO_ANALYSIS_LIMIT,
+  repoSourceReadLimit = DEFAULT_REPO_SOURCE_READ_LIMIT,
   signal,
 } = {}) {
   const text = missionText(mission, input)
@@ -1181,6 +1299,7 @@ export async function readGitHubMission({
     let repoSearchAnalyses = []
     let repoSearchLessons = []
     let repoSearchReadPlans = []
+    let repoSearchSourceReads = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -1224,6 +1343,17 @@ export async function readGitHubMission({
           url: 'github://search/read-plan',
           summary: `已生成 ${repoSearchReadPlans.length} 条后续源码读取计划。`,
         })
+        const plannedReads = await readPlannedSourceTargets({
+          plans: repoSearchReadPlans,
+          analyses: repoSearchAnalyses,
+          fetchJson,
+          headers,
+          signal,
+          contentEntryLimit,
+          sourceReadLimit: repoSourceReadLimit,
+        })
+        repoSearchSourceReads = plannedReads.reads
+        stages.push(...plannedReads.stages)
       }
     } else {
       const reason = failureText(searchResult, 'github.search.repositories')
@@ -1242,6 +1372,7 @@ export async function readGitHubMission({
       repoSearchAnalyses,
       repoSearchLessons,
       repoSearchReadPlans,
+      repoSearchSourceReads,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -1269,6 +1400,7 @@ export async function readGitHubMission({
       repoSearchAnalyses,
       repoSearchLessons,
       repoSearchReadPlans,
+      repoSearchSourceReads,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -1282,6 +1414,7 @@ export async function readGitHubMission({
         ...repoSearchAnalyses.map((analysis, index) => `候选深读 ${index + 1}：${searchCandidateAnalysisLine(analysis, index)} ${analysis.htmlUrl}`.trim()),
         ...repoSearchLessons.map((lesson, index) => `候选吸收建议 ${index + 1}：${repoSearchLessonLine(lesson, index)} ${lesson.htmlUrl}`.trim()),
         ...repoSearchReadPlans.map((plan, index) => `候选读取计划 ${index + 1}：${repoSearchReadPlanLine(plan, index)} ${plan.htmlUrl}`.trim()),
+        ...repoSearchSourceReads.map((read, index) => `候选源码证据 ${index + 1}：${repoSearchSourceReadLine(read, index)} ${read.htmlUrl}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),

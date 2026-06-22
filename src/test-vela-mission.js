@@ -452,6 +452,30 @@ try {
         { type: 'file', name: 'agent.ts', path: 'src/agent.ts', size: 900, html_url: 'https://github.com/browser-use/browser-use/blob/main/src/agent.ts' },
       ]
     }
+    if (url.endsWith('/repos/browser-use/browser-use/contents/src/index.ts')) {
+      return {
+        type: 'file',
+        name: 'index.ts',
+        path: 'src/index.ts',
+        encoding: 'base64',
+        content: Buffer.from('export function observePage() { return "browser observation"; }\n').toString('base64'),
+        size: 61,
+        sha: 'browser-index-sha',
+        html_url: 'https://github.com/browser-use/browser-use/blob/main/src/index.ts',
+      }
+    }
+    if (url.endsWith('/repos/browser-use/browser-use/contents/src/agent.ts')) {
+      return {
+        type: 'file',
+        name: 'agent.ts',
+        path: 'src/agent.ts',
+        encoding: 'base64',
+        content: Buffer.from('export class BrowserAgent { recover() { return "retry with state"; } }\n').toString('base64'),
+        size: 72,
+        sha: 'browser-agent-sha',
+        html_url: 'https://github.com/browser-use/browser-use/blob/main/src/agent.ts',
+      }
+    }
     if (url.endsWith('/repos/browser-use/browser-use/contents/package.json')) {
       return {
         type: 'file',
@@ -487,6 +511,18 @@ try {
       return [
         { type: 'file', name: 'index.ts', path: 'src/index.ts', size: 450, html_url: 'https://github.com/microsoft/playwright-mcp/blob/main/src/index.ts' },
       ]
+    }
+    if (url.endsWith('/repos/microsoft/playwright-mcp/contents/src/index.ts')) {
+      return {
+        type: 'file',
+        name: 'index.ts',
+        path: 'src/index.ts',
+        encoding: 'base64',
+        content: Buffer.from('export function registerTools() { return ["browser_snapshot", "browser_click"]; }\n').toString('base64'),
+        size: 80,
+        sha: 'playwright-index-sha',
+        html_url: 'https://github.com/microsoft/playwright-mcp/blob/main/src/index.ts',
+      }
     }
     if (url.endsWith('/repos/microsoft/playwright-mcp/contents/package.json')) {
       return {
@@ -529,6 +565,7 @@ try {
   assert(githubRepoSearchResult.sourceTools.includes('github.search.candidate.entry'), 'GitHub reader records candidate entry-file reads')
   assert(githubRepoSearchResult.sourceTools.includes('github.search.lessons.synthesize'), 'GitHub reader records candidate lesson synthesis')
   assert(githubRepoSearchResult.sourceTools.includes('github.search.read-plan.synthesize'), 'GitHub reader records candidate read-plan synthesis')
+  assert(githubRepoSearchResult.sourceTools.includes('github.search.planned-source.read'), 'GitHub reader records planned source reads')
   assert(githubRepoSearchResult.repoSearchResults.at(0).fullName === 'browser-use/browser-use', 'GitHub reader keeps repository search candidates')
   assert(githubRepoSearchResult.repoSearchAnalyses.length === 2, 'GitHub reader deep-reads top repository search candidates')
   assert(githubRepoSearchResult.repoSearchAnalyses.at(0).readme.contentExcerpt.includes('AI browser agent'), 'GitHub reader keeps candidate README excerpts')
@@ -540,13 +577,31 @@ try {
   assert(githubRepoSearchResult.repoSearchReadPlans.length === 2, 'GitHub reader synthesizes follow-up source read plans')
   assert(githubRepoSearchResult.repoSearchReadPlans.at(0).targets.some(item => item.path === 'src/index.ts'), 'GitHub reader plans high-signal source reads')
   assert(githubRepoSearchResult.repoSearchReadPlans.at(0).targets.every(item => item.risk === 'Read'), 'GitHub reader keeps read plans read-only')
+  assert(githubRepoSearchResult.repoSearchSourceReads.length === 3, 'GitHub reader executes bounded planned source reads')
+  assert(githubRepoSearchResult.repoSearchSourceReads.at(0).path === 'src/index.ts', 'GitHub reader reads planned source paths')
+  assert(githubRepoSearchResult.repoSearchSourceReads.at(0).contentDetail.contentExcerpt.includes('observePage'), 'GitHub reader keeps planned source excerpts')
+  assert(githubRepoSearchResult.repoSearchSourceReads.every(item => item.risk === 'Read'), 'GitHub reader keeps planned source reads read-only')
   assert(githubRepoSearchResult.summary.includes('browser-use/browser-use'), 'GitHub reader summarizes repository candidates')
   assert(githubRepoSearchResult.summary.includes('README'), 'GitHub reader summarizes candidate deep-read evidence')
   assert(githubRepoSearchResult.summary.includes('开源吸收建议'), 'GitHub reader summarizes synthesized lessons')
   assert(githubRepoSearchResult.summary.includes('后续源码读取计划'), 'GitHub reader summarizes synthesized read plans')
+  assert(githubRepoSearchResult.summary.includes('源码目标'), 'GitHub reader summarizes planned source reads')
   assert(githubRepoSearchResult.evidence.some(item => item.includes('候选吸收建议')), 'GitHub reader keeps lesson evidence')
   assert(githubRepoSearchResult.evidence.some(item => item.includes('候选读取计划')), 'GitHub reader keeps read-plan evidence')
+  assert(githubRepoSearchResult.evidence.some(item => item.includes('候选源码证据')), 'GitHub reader keeps planned source evidence')
   assert(githubRepoSearchResult.evidence.some(item => item.includes('未 star')), 'GitHub reader records repository search read-only boundary')
+  const githubRepoSearchPlanOnlyResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 搜索 browser automation agent 开源项目',
+      goal: '用 GitHub 搜索 browser automation agent 开源项目',
+      inputs: [],
+    },
+    fetchJson: githubRepoSearchFetchJson,
+    repoSourceReadLimit: 0,
+  })
+  assert(githubRepoSearchPlanOnlyResult.repoSearchReadPlans.length === 2, 'GitHub reader still plans source reads when planned source read limit is zero')
+  assert(githubRepoSearchPlanOnlyResult.repoSearchSourceReads.length === 0, 'GitHub reader honors zero planned source read limit')
+  assert(!githubRepoSearchPlanOnlyResult.sourceTools.includes('github.search.planned-source.read'), 'GitHub reader skips planned source read tool when limit is zero')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -1421,20 +1476,24 @@ try {
   assert(githubSearchReviewing.toolCalls.at(-1).result.includes('github.search.candidate.readme'), 'async GitHub repository search command records candidate README source tool')
   assert(githubSearchReviewing.toolCalls.at(-1).result.includes('github.search.lessons.synthesize'), 'async GitHub repository search command records lesson synthesis source tool')
   assert(githubSearchReviewing.toolCalls.at(-1).result.includes('github.search.read-plan.synthesize'), 'async GitHub repository search command records read-plan synthesis source tool')
+  assert(githubSearchReviewing.toolCalls.at(-1).result.includes('github.search.planned-source.read'), 'async GitHub repository search command records planned source read tool')
   assert(githubSearchReviewing.artifacts.at(-1).summary.includes('browser-use/browser-use'), 'async GitHub repository search command summarizes candidates')
   assert(githubSearchReviewing.artifacts.at(-1).summary.includes('README'), 'async GitHub repository search command summarizes candidate deep-read evidence')
   assert(githubSearchReviewing.artifacts.at(-1).summary.includes('开源吸收建议'), 'async GitHub repository search command summarizes synthesized lessons')
   assert(githubSearchReviewing.artifacts.at(-1).summary.includes('后续源码读取计划'), 'async GitHub repository search command summarizes read plans')
+  assert(githubSearchReviewing.artifacts.at(-1).summary.includes('源码目标'), 'async GitHub repository search command summarizes planned source reads')
   assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('playwright-mcp')), 'async GitHub repository search command keeps candidate evidence')
   assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('候选深读')), 'async GitHub repository search command keeps candidate analysis evidence')
   assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('候选吸收建议')), 'async GitHub repository search command keeps lesson evidence')
   assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('候选读取计划')), 'async GitHub repository search command keeps read-plan evidence')
+  assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('候选源码证据')), 'async GitHub repository search command keeps planned source evidence')
   const githubSearchToolId = githubSearchReviewing.toolCalls.at(-1).id
   const githubSearchStages = githubSearchReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubSearchToolId)
   assert(githubSearchStages.some(item => item.toolName === 'github.search.repositories' && item.result === 'ok'), 'async GitHub repository search command records search stage')
   assert(githubSearchStages.some(item => item.toolName === 'github.search.candidate.entry' && item.result === 'ok'), 'async GitHub repository search command records candidate entry stage')
   assert(githubSearchStages.some(item => item.toolName === 'github.search.lessons.synthesize' && item.result === 'ok'), 'async GitHub repository search command records lesson synthesis stage')
   assert(githubSearchStages.some(item => item.toolName === 'github.search.read-plan.synthesize' && item.result === 'ok'), 'async GitHub repository search command records read-plan synthesis stage')
+  assert(githubSearchStages.some(item => item.toolName === 'github.search.planned-source.read' && item.result === 'ok'), 'async GitHub repository search command records planned source read stage')
   assert(githubSearchStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub repository search command records skipped write-action stage')
 
   runtime.applyCurrentMissionCommand({

@@ -746,6 +746,7 @@ function normalizeMcpGithubReadResult(value) {
     repoSearchAnalyses: normalizeArray(value.repoSearchAnalyses),
     repoSearchLessons: normalizeArray(value.repoSearchLessons),
     repoSearchReadPlans: normalizeArray(value.repoSearchReadPlans),
+    repoSearchSourceReads: normalizeArray(value.repoSearchSourceReads),
     repoSearchTotalCount: Number(value.repoSearchTotalCount || 0),
     repoSearchIncompleteResults: value.repoSearchIncompleteResults === true,
   }
