@@ -60,8 +60,8 @@ export const OPEN_CAPABILITY_REGISTRY = [
         licensePolicy: 'adapter-only',
       },
     ],
-    integrationStatus: 'planned',
-    evaluation: 'Add MCP registry eval that verifies risk declaration and trace linkage before execution.',
+    integrationStatus: 'adapter-ready',
+    evaluation: 'test:vela-mission covers MCP candidate routing, risk declaration, trace linkage, review evidence, and skipped external tool execution.',
   },
   {
     id: 'agent.orchestration',

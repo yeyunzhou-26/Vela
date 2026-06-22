@@ -50,6 +50,10 @@ function primaryMemoryCapability(mission = {}) {
   return capabilityById(mission, 'memory.context-os')
 }
 
+function primaryMcpBridgeCapability(mission = {}) {
+  return capabilityById(mission, 'tool.mcp-bridge')
+}
+
 function primaryAgentOrchestrationCapability(mission = {}) {
   return capabilityById(mission, 'agent.orchestration')
 }
@@ -128,6 +132,23 @@ function hasMemoryResultForPrepare(mission = {}, prepareToolId = '') {
     asText(artifact.uri).includes(`/results/${marker}`)
   )) || normalizeArray(mission.memoryReferences).some(reference => (
     asText(reference.provenance || reference.uri).includes(`/results/${marker}`)
+  ))
+}
+
+function latestMcpBridgePrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'tool.mcp-bridge.prepare'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasMcpBridgeResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
   ))
 }
 
@@ -394,6 +415,149 @@ function planMemoryAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function mcpToolCandidatesForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  const candidates = []
+  const add = (candidate) => {
+    if (!candidates.some(item => item.id === candidate.id)) candidates.push(candidate)
+  }
+
+  if (/(?:github|issue|pull request|pr\b|repository|repo|仓库|议题|拉取请求)/i.test(text)) {
+    add({
+      id: 'github',
+      label: 'GitHub',
+      server: 'github',
+      toolNames: ['issues', 'pull_requests', 'repos'],
+      riskClasses: ['Read', 'Network'],
+      boundary: '读取公开或已授权 GitHub 数据可以路由；写评论、改 issue、合并 PR 前必须确认。',
+    })
+  }
+  if (/(?:\bgit\b|commit|branch|diff|status|push|pull|分支|提交|变更|差异)/i.test(text)) {
+    add({
+      id: 'git',
+      label: 'Git',
+      server: 'git',
+      toolNames: ['status', 'diff', 'log'],
+      riskClasses: ['Read', 'Write', 'Execute'],
+      boundary: '读取状态和 diff 可以路由；commit、push、reset、checkout 等写入或破坏性动作必须确认。',
+    })
+  }
+  if (/(?:file system|filesystem|文件系统|本地文件|目录|路径)/i.test(text)) {
+    add({
+      id: 'filesystem',
+      label: '文件系统',
+      server: 'filesystem',
+      toolNames: ['read_file', 'list_directory'],
+      riskClasses: ['Read', 'Write'],
+      boundary: '读取需要限定工作区范围；写入、覆盖、删除必须确认路径和范围。',
+    })
+  }
+  if (/(?:fetch|http|api|抓取|接口|网页抓取)/i.test(text)) {
+    add({
+      id: 'fetch',
+      label: '网页抓取',
+      server: 'fetch',
+      toolNames: ['fetch_url'],
+      riskClasses: ['Read', 'Network'],
+      boundary: '只读抓取可以路由；提交表单、登录态或外部发送动作必须确认。',
+    })
+  }
+  if (/(?:memory|remember|记忆|知识图谱|上下文)/i.test(text)) {
+    add({
+      id: 'memory',
+      label: '记忆',
+      server: 'memory',
+      toolNames: ['search_memory', 'read_graph'],
+      riskClasses: ['Read'],
+      boundary: '读取记忆必须保留来源；写入长期记忆或外传敏感内容需要单独确认。',
+    })
+  }
+  if (/(?:time|date|calendar|时间|日期|日程)/i.test(text)) {
+    add({
+      id: 'time',
+      label: '时间',
+      server: 'time',
+      toolNames: ['get_time', 'convert_timezone'],
+      riskClasses: ['Read'],
+      boundary: '时间查询为只读；创建日程或提醒需要对应外部效果确认。',
+    })
+  }
+  if (/(?:database|db|sql|sqlite|数据库)/i.test(text)) {
+    add({
+      id: 'database',
+      label: '数据库',
+      server: 'database',
+      toolNames: ['inspect_schema', 'query'],
+      riskClasses: ['Read', 'Write'],
+      boundary: '只读查询必须限定连接和表；写入、迁移、删除数据必须确认。',
+    })
+  }
+
+  if (!candidates.length) {
+    add({
+      id: 'generic-tool',
+      label: '通用工具',
+      server: 'mcp',
+      toolNames: ['registry_lookup'],
+      riskClasses: ['Read'],
+      boundary: '先解析可用工具和权限边界；真实执行前再进入 Guard。',
+    })
+  }
+
+  return candidates
+}
+
+function mcpRiskList(candidates = []) {
+  return [...new Set(normalizeArray(candidates).flatMap(item => normalizeArray(item.riskClasses)))]
+}
+
+function mcpBridgeSummary(mission = {}, input = {}) {
+  const goal = asText(mission.goal || mission.title || input.text, '当前工具任务')
+  const candidates = mcpToolCandidatesForMission(mission, input)
+  const labels = candidates.map(item => item.label).join('、')
+  const risks = mcpRiskList(candidates).join('、')
+  return `MCP 工具桥已为「${goal}」解析候选工具：${labels}；风险类别：${risks || 'Read'}。当前只建立工具路由、来源和 Guard 边界，不调用真实 MCP 工具、不访问外部网络、不写入文件或仓库。`
+}
+
+function planMcpBridgeRun(mission = {}, input = {}) {
+  const capability = primaryMcpBridgeCapability(mission)
+  if (capability?.id !== 'tool.mcp-bridge') return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId(capability.id)
+  const candidates = mcpToolCandidatesForMission(mission, input)
+  const summary = mcpBridgeSummary(mission, input)
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'tool.mcp-bridge.prepare',
+      role: 'Builder',
+      status: 'prepared',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      title: 'MCP 工具路由方案',
+      kind: 'plan',
+      uri: `vela://capabilities/tool.mcp-bridge/runs/${toolCallId}`,
+      summary,
+      planStepId,
+    },
+    agentActions: [{
+      role: 'Builder',
+      title: '规划 MCP 工具路由',
+      status: 'done',
+      planStepId,
+      summary: `已识别候选 MCP 工具：${candidates.map(item => item.label).join('、')}。`,
+      result: '路由已准备',
+      requiresReview: false,
+    }],
+    nextStep: 'MCP 工具桥已准备好候选工具和 Guard 边界；继续后会生成可复核的工具路由摘要。',
+  }
+}
+
 function orchestrationRolePlanForMission(mission = {}, input = {}) {
   const text = missionText(mission, input)
   const roles = [
@@ -492,6 +656,7 @@ export function planCapabilityAdapterRun(mission = {}, input = {}) {
     || planDesktopAdapterRun(mission, input)
     || planFilesAdapterRun(mission, input)
     || planMemoryAdapterRun(mission, input)
+    || planMcpBridgeRun(mission, input)
     || planAgentOrchestrationRun(mission, input)
 }
 
@@ -872,6 +1037,112 @@ function executeMemoryAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function executeMcpBridgeRun(mission = {}, input = {}) {
+  const capability = primaryMcpBridgeCapability(mission)
+  if (capability?.id !== 'tool.mcp-bridge') return null
+
+  const prepareTool = latestMcpBridgePrepareTool(mission)
+  if (!prepareTool || hasMcpBridgeResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId('tool.mcp-bridge.route')
+  const artifactId = makeAdapterResultId('tool.mcp-bridge')
+  const artifactUri = `vela://capabilities/tool.mcp-bridge/results/${prepareTool.id}`
+  const candidates = mcpToolCandidatesForMission(mission, input)
+  const risks = mcpRiskList(candidates)
+  const summary = mcpBridgeSummary(mission, input)
+  const evidence = [
+    `准备工具调用：${prepareTool.id}`,
+    `候选工具：${candidates.map(item => `${item.server}/${item.toolNames.join('+')}`).join('；')}`,
+    `风险类别：${risks.join('、') || 'Read'}`,
+    `能力来源：${asText(capability.source, 'modelcontextprotocol/servers')}`,
+    '当前只生成路由摘要；未调用真实 MCP 工具、未访问外部网络、未写入文件或仓库。',
+  ]
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'tool.mcp-bridge.route',
+      role: 'Builder',
+      status: 'ok',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title: 'MCP 工具路由摘要',
+      kind: 'mcp-route-summary',
+      uri: artifactUri,
+      summary,
+      planStepId,
+    },
+    agentActions: [
+      {
+        role: 'Builder',
+        title: '匹配 MCP 工具候选',
+        status: 'done',
+        planStepId,
+        summary: `候选工具：${candidates.map(item => item.label).join('、')}。`,
+        result: '候选已匹配',
+        requiresReview: false,
+      },
+      {
+        role: 'Reviewer',
+        title: '复核 MCP 工具边界',
+        status: 'done',
+        planStepId,
+        summary: '审查者确认本次只生成工具路由和权限边界，没有真实执行工具。',
+        result: '复核通过',
+        requiresReview: true,
+      },
+    ],
+    reviewCheck: {
+      key: `mcp-bridge-${asText(mission.id, 'mission')}`,
+      title: 'MCP 工具桥复核',
+      outcome: 'passed',
+      reviewer: 'Vela Tool Bridge Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: 'MCP 工具桥已记录候选工具、风险类别、来源和无真实执行证据。',
+      evidence,
+      failures: [],
+    },
+    toolStages: [
+      {
+        toolName: 'mcp.registry.resolve',
+        status: 'ok',
+        stage: 'mcp-registry-resolve',
+        summary: `解析候选 MCP server：${candidates.map(item => item.server).join('、')}。`,
+        url: `${artifactUri}#registry`,
+        planStepId,
+        role: 'Builder',
+      },
+      ...candidates.map(candidate => ({
+        toolName: `mcp.candidate.${candidate.id}`,
+        status: 'ok',
+        stage: `mcp-candidate-${candidate.id}`,
+        summary: `${candidate.label}：${candidate.boundary}`,
+        url: `${artifactUri}#${candidate.id}`,
+        planStepId,
+        role: 'Builder',
+      })),
+      {
+        toolName: 'mcp.external-tool-execution',
+        status: 'skipped',
+        stage: 'mcp-no-execution',
+        summary: '未调用真实 MCP 工具；写入、命令、网络和凭证动作仍需 Guard。',
+        url: 'mcp://execution-skipped',
+        planStepId,
+        role: 'Reviewer',
+      },
+    ],
+    nextStep: 'MCP 工具路由摘要已准备好；接入真实工具执行前，Vela 会按风险走 Guard。',
+  }
+}
+
 function executeAgentOrchestrationRun(mission = {}, input = {}) {
   const capability = primaryAgentOrchestrationCapability(mission)
   if (capability?.id !== 'agent.orchestration') return null
@@ -980,6 +1251,7 @@ export function executeCapabilityAdapterRun(mission = {}, input = {}) {
     || executeDesktopAdapterRun(mission, input)
     || executeFilesAdapterRun(mission, input)
     || executeMemoryAdapterRun(mission, input)
+    || executeMcpBridgeRun(mission, input)
     || executeAgentOrchestrationRun(mission, input)
 }
 

@@ -54,6 +54,37 @@ try {
   assert(browserAdapterLiveRun.toolCall.result.includes('web_search + fetch_url'), 'browser adapter result records live web tools')
   assert(browserAdapterLiveRun.artifact.summary.includes('网页搜索和读取'), 'browser adapter artifact uses live web summary')
   assert(browserAdapterLiveRun.reviewCheck.evidence.at(-1).includes('example.com'), 'browser adapter review uses live evidence')
+  const mcpCapability = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue')[0]
+  assert(mcpCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub tool tasks to MCP bridge')
+  assert(mcpCapability.riskClasses.includes('Network'), 'MCP bridge capability declares network risk')
+  assert(mcpCapability.integrationStatus === 'adapter-ready', 'MCP bridge capability is marked adapter-ready')
+  const mcpAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    id: 'mission-mcp-adapter',
+    title: '用 github 工具查看 issue',
+    goal: '用 github 工具查看 issue',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [mcpCapability],
+  })
+  assert(mcpAdapterPlan.toolCall.toolName === 'tool.mcp-bridge.prepare', 'MCP bridge adapter prepares a tool routing call')
+  assert(mcpAdapterPlan.artifact.title === 'MCP 工具路由方案', 'MCP bridge adapter creates routing plan artifact')
+  assert(mcpAdapterPlan.agentActions.at(-1).title === '规划 MCP 工具路由', 'MCP bridge adapter records routing planner action')
+  assert(!mcpAdapterPlan.permission, 'MCP bridge adapter does not request permission before route-only planning')
+  const mcpAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-mcp-adapter',
+    title: '用 github 工具查看 issue',
+    goal: '用 github 工具查看 issue',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [mcpCapability],
+    toolCalls: [mcpAdapterPlan.toolCall],
+    artifacts: [mcpAdapterPlan.artifact],
+  })
+  assert(mcpAdapterRun.toolCall.toolName === 'tool.mcp-bridge.route', 'MCP bridge adapter records route summary')
+  assert(mcpAdapterRun.artifact.kind === 'mcp-route-summary', 'MCP bridge adapter creates route summary artifact')
+  assert(mcpAdapterRun.reviewCheck.title === 'MCP 工具桥复核', 'MCP bridge adapter creates reviewer check')
+  assert(mcpAdapterRun.reviewCheck.outcome === 'passed', 'MCP bridge reviewer check passes')
+  assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.registry.resolve'), 'MCP bridge adapter records registry resolution stage')
+  assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.candidate.github'), 'MCP bridge adapter records GitHub candidate stage')
+  assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.external-tool-execution' && item.status === 'skipped'), 'MCP bridge adapter records skipped external tool execution')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
   assert(fallbackCapability.integrationStatus === 'adapter-ready', 'agent orchestration capability is marked adapter-ready')
@@ -566,6 +597,26 @@ try {
 
   const commandCompleted = runtime.applyCurrentMissionCommand({ text: 'complete', source: 'test-command' })
   assert(commandCompleted.state === 'Complete', 'complete command succeeds after reviewer outcome')
+
+  const mcpCommandMission = runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 issue',
+    source: 'test-command',
+  })
+  assert(mcpCommandMission.capabilityReferences.some(item => item.id === 'tool.mcp-bridge'), 'MCP command mission matches tool bridge capability')
+  const mcpCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(mcpCommandRunning.state === 'Running', 'MCP command enters running state')
+  assert(mcpCommandRunning.toolCalls.at(-1).toolName === 'tool.mcp-bridge.prepare', 'MCP command records bridge prepare tool call')
+  assert(mcpCommandRunning.artifacts.at(-1).title === 'MCP 工具路由方案', 'MCP command creates routing plan artifact')
+  const mcpCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(mcpCommandReviewing.state === 'Reviewing', 'MCP command moves to reviewing after routing')
+  assert(mcpCommandReviewing.toolCalls.at(-1).toolName === 'tool.mcp-bridge.route', 'MCP command records bridge routing tool call')
+  assert(mcpCommandReviewing.artifacts.at(-1).kind === 'mcp-route-summary', 'MCP command creates route summary artifact')
+  assert(mcpCommandReviewing.reviewChecks.at(-1).title === 'MCP 工具桥复核', 'MCP command creates MCP bridge review check')
+  assert(mcpCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'MCP command review passes')
+  const mcpRouteToolId = mcpCommandReviewing.toolCalls.at(-1).id
+  const mcpStages = mcpCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === mcpRouteToolId)
+  assert(mcpStages.some(item => item.toolName === 'mcp.candidate.github' && item.result === 'ok'), 'MCP command records GitHub candidate stage')
+  assert(mcpStages.some(item => item.toolName === 'mcp.external-tool-execution' && item.result === 'skipped'), 'MCP command records skipped MCP execution')
 
   const browserCommandMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页搜索资料并总结',
