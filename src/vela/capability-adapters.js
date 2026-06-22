@@ -736,6 +736,11 @@ function normalizeMcpGithubReadResult(value) {
     pullDetail: value.pullDetail || null,
     pullFiles: normalizeArray(value.pullFiles),
     pullReviews: normalizeArray(value.pullReviews),
+    contentRequest: value.contentRequest || null,
+    contentDetail: value.contentDetail || null,
+    contentItems: normalizeArray(value.contentItems),
+    contentTotalItems: Number(value.contentTotalItems || 0),
+    contentTruncated: value.contentTruncated === true,
   }
 }
 

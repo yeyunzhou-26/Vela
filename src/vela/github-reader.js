@@ -3,7 +3,9 @@ const DEFAULT_ISSUE_LIMIT = 5
 const DEFAULT_COMMENT_LIMIT = 5
 const DEFAULT_PR_FILE_LIMIT = 12
 const DEFAULT_PR_REVIEW_LIMIT = 5
+const DEFAULT_CONTENT_ENTRY_LIMIT = 20
 const BODY_EXCERPT_LENGTH = 360
+const CONTENT_EXCERPT_LENGTH = 1600
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
@@ -60,12 +62,48 @@ function compactText(value = '', max = BODY_EXCERPT_LENGTH) {
   return `${text.slice(0, max)}...`
 }
 
+function compactContentText(value = '') {
+  return compactText(value, CONTENT_EXCERPT_LENGTH)
+}
+
+function decodeGitHubValue(value = '') {
+  const text = asText(value)
+  if (!text) return ''
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
+function cleanGitHubPath(value = '') {
+  return decodeGitHubValue(value)
+    .replace(/[?#].*$/g, '')
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/[.,;:!?，。；：！？）)]+$/g, '')
+    .split('/')
+    .filter(part => part && part !== '.' && part !== '..')
+    .join('/')
+}
+
+function encodeGitHubPath(value = '') {
+  return cleanGitHubPath(value)
+    .split('/')
+    .filter(Boolean)
+    .map(part => encodeURIComponent(part))
+    .join('/')
+}
+
 function hasGitHubContext(text = '') {
-  return /(?:github|repo|repository|仓库|issue|issues|议题|pull request|pr\b|拉取请求)/i.test(text)
+  return /(?:github|repo|repository|仓库|issue|issues|议题|pull request|pr\b|拉取请求|readme|文件|目录|源码|代码|package\.json|src\/|docs\/|scripts\/)/i.test(text)
 }
 
 function hasPullIntent(text = '') {
   return /(?:\/pull\/|pull request|pr\b|拉取请求)/i.test(text)
+}
+
+function hasIssueIntent(text = '') {
+  return /(?:\/issues\/|\bissues?\b|议题|问题|bug)/i.test(text)
 }
 
 export function extractGitHubTarget(value = '') {
@@ -118,6 +156,85 @@ export function extractGitHubPullNumber(value = '') {
   if (!hasGitHubContext(text)) return null
   const labeledMatch = text.match(/(?:pull request|pr|拉取请求)\s*#?\s*(\d+)/i)
   if (labeledMatch) return Number(labeledMatch[1])
+  return null
+}
+
+function extractGitHubRef(value = '') {
+  const text = asText(value)
+  if (!text) return ''
+  const labeledMatch = text.match(/(?:ref|branch|分支)\s*[：:=]?\s*([a-z0-9._/@+-]+)/i)
+  return labeledMatch ? cleanGitHubPath(labeledMatch[1]) : ''
+}
+
+function explicitContentPathForText(text = '') {
+  const labeledMatch = text.match(/(?:文件|源码文件|代码文件|file|path|目录|directory|folder)\s*[：:]?\s*([a-z0-9._@/+~-]+(?:\/[a-z0-9._@/+~-]+)*)(?=\s|$|[，。；,;])/i)
+  if (labeledMatch) return cleanGitHubPath(labeledMatch[1])
+
+  const knownFileMatch = text.match(/\b((?:README(?:\.[a-z0-9]+)?)|package\.json|pnpm-lock\.yaml|yarn\.lock|package-lock\.json|tsconfig\.json|vite\.config\.[a-z0-9]+|src\/[a-z0-9._@/+~-]+|docs\/[a-z0-9._@/+~-]+|scripts\/[a-z0-9._@/+~-]+)\b/i)
+  return knownFileMatch ? cleanGitHubPath(knownFileMatch[1]) : ''
+}
+
+function hasDirectoryIntent(text = '') {
+  return /(?:\/tree\/|目录|文件列表|目录结构|代码结构|根目录|root|directory|folder|tree|list files)/i.test(text)
+}
+
+function hasReadmeIntent(text = '') {
+  return /(?:readme|自述|说明文档|项目说明)/i.test(text)
+}
+
+function wantsRepoContent(text = '') {
+  if (!text || hasPullIntent(text)) return false
+  const strongContentIntent = /(?:\/blob\/|\/tree\/|readme|自述|说明文档|项目说明|文件|目录|源码|代码|package\.json|src\/|docs\/|scripts\/|文件列表|目录结构|代码结构)/i.test(text)
+  if (strongContentIntent) return true
+  if (hasIssueIntent(text)) return false
+  return /(?:root|folder|directory|content|contents)/i.test(text)
+}
+
+export function extractGitHubContentRequest(value = '') {
+  const text = asText(value)
+  if (!text || !wantsRepoContent(text)) return null
+
+  const urlPathMatch = text.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+(?:\.git)?\/(blob|tree)\/([^/\s?#，。；、）)]+)(?:\/([^\s?#，。；、）)]+))?/i)
+  if (urlPathMatch) {
+    const path = cleanGitHubPath(urlPathMatch[3] || '')
+    return {
+      kind: urlPathMatch[1].toLowerCase() === 'tree' ? 'directory' : 'file',
+      path,
+      ref: cleanGitHubPath(urlPathMatch[2]),
+      source: `github-${urlPathMatch[1].toLowerCase()}-url`,
+    }
+  }
+
+  const ref = extractGitHubRef(text)
+  const explicitPath = explicitContentPathForText(text)
+  if (explicitPath) {
+    const readme = hasReadmeIntent(explicitPath)
+    return {
+      kind: readme ? 'readme' : (hasDirectoryIntent(text) ? 'directory' : 'file'),
+      path: readme ? 'README' : explicitPath,
+      ref,
+      source: readme ? 'readme-path-intent' : 'path-intent',
+    }
+  }
+
+  if (hasReadmeIntent(text)) {
+    return {
+      kind: 'readme',
+      path: 'README',
+      ref,
+      source: 'readme-intent',
+    }
+  }
+
+  if (hasDirectoryIntent(text) || /(?:源码|代码)/i.test(text)) {
+    return {
+      kind: 'directory',
+      path: '',
+      ref,
+      source: 'directory-intent',
+    }
+  }
+
   return null
 }
 
@@ -329,6 +446,81 @@ function compactPullReview(review = {}) {
   }
 }
 
+function decodeBase64Content(content = '') {
+  const normalized = asText(content).replace(/\s/g, '')
+  if (!normalized) return ''
+  try {
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(normalized, 'base64').toString('utf8')
+    }
+  } catch {
+    // Fall through to browser decoding.
+  }
+  try {
+    if (typeof atob === 'function') {
+      return decodeURIComponent(escape(atob(normalized)))
+    }
+  } catch {
+    return ''
+  }
+  return ''
+}
+
+function compactContentEntry(entry = {}) {
+  return {
+    name: asText(entry.name, ''),
+    path: asText(entry.path, ''),
+    type: asText(entry.type, ''),
+    size: Number(entry.size || 0),
+    sha: asText(entry.sha, ''),
+    htmlUrl: asText(entry.html_url, ''),
+    downloadUrl: asText(entry.download_url, ''),
+  }
+}
+
+function compactContentFile(file = {}, request = {}) {
+  const decoded = asText(file.encoding).toLowerCase() === 'base64'
+    ? decodeBase64Content(file.content)
+    : asText(file.content)
+  return {
+    name: asText(file.name, request.path || 'README'),
+    path: asText(file.path, request.path || ''),
+    type: asText(file.type, 'file'),
+    size: Number(file.size || decoded.length || 0),
+    sha: asText(file.sha, ''),
+    encoding: asText(file.encoding, ''),
+    htmlUrl: asText(file.html_url, ''),
+    downloadUrl: asText(file.download_url, ''),
+    contentExcerpt: compactContentText(decoded),
+  }
+}
+
+function compactContentResult(body, request = {}, entryLimit = DEFAULT_CONTENT_ENTRY_LIMIT) {
+  const limit = Math.max(1, Math.min(Number(entryLimit) || DEFAULT_CONTENT_ENTRY_LIMIT, 50))
+  if (Array.isArray(body)) {
+    return {
+      detail: null,
+      items: body.slice(0, limit).map(compactContentEntry),
+      totalItems: body.length,
+      truncated: body.length > limit,
+    }
+  }
+  if (body?.type === 'dir' && Array.isArray(body.entries)) {
+    return {
+      detail: null,
+      items: body.entries.slice(0, limit).map(compactContentEntry),
+      totalItems: body.entries.length,
+      truncated: body.entries.length > limit,
+    }
+  }
+  return {
+    detail: compactContentFile(body || {}, request),
+    items: [],
+    totalItems: 0,
+    truncated: false,
+  }
+}
+
 function repoLine(repo = {}) {
   const parts = [
     repo.description,
@@ -377,6 +569,19 @@ function pullReviewLine(review = {}, index = 0) {
   return `${reviewer} ${review.state || 'reviewed'}${body}`
 }
 
+function contentItemLine(item = {}, index = 0) {
+  const name = item.path || item.name || `条目 ${index + 1}`
+  const size = item.size ? `，${item.size} bytes` : ''
+  return `${item.type || 'item'} ${name}${size}`
+}
+
+function contentDetailLine(detail = {}) {
+  const name = detail.path || detail.name || '仓库文件'
+  const size = detail.size ? `，${detail.size} bytes` : ''
+  const excerpt = detail.contentExcerpt ? `内容摘录：${detail.contentExcerpt}` : '没有可读内容摘录'
+  return `${name}${size}；${excerpt}`
+}
+
 function summarizeGitHubRead({
   repo,
   issues = [],
@@ -385,6 +590,11 @@ function summarizeGitHubRead({
   pullDetail = null,
   pullFiles = [],
   pullReviews = [],
+  contentRequest = null,
+  contentDetail = null,
+  contentItems = [],
+  contentTotalItems = 0,
+  contentTruncated = false,
   includeIssues = false,
   state = 'open',
   failures = [],
@@ -394,6 +604,22 @@ function summarizeGitHubRead({
     return `GitHub 只读执行没有拿到仓库数据。${reason ? `失败原因：${reason}` : '请提供 owner/repo 或 GitHub 仓库链接。'}`
   }
   const intro = `已读取 GitHub 仓库 ${repo.fullName}：${repoLine(repo)}。`
+  if (contentRequest && !contentDetail && !contentItems.length) {
+    const reason = failures
+      .filter(item => /^github\.(?:contents|readme)/.test(item.tool))
+      .map(item => item.reason)
+      .filter(Boolean)
+      .join('；')
+    return `${intro}仓库内容读取没有拿到可用数据。${reason ? `失败原因：${reason}` : '请确认文件路径、目录或分支是否存在。'}全程只读，没有改文件、提交、推送、评论、合并或访问凭证。`
+  }
+  if (contentDetail || contentItems.length) {
+    if (contentDetail) {
+      return `${intro}已读取仓库文件：${contentDetailLine(contentDetail)}。全程只读，没有改文件、提交、推送、评论、合并或访问凭证。`
+    }
+    const pathLabel = contentRequest?.path ? `目录 ${contentRequest.path}` : '仓库根目录'
+    const truncated = contentTruncated ? `；还有 ${Math.max(0, contentTotalItems - contentItems.length)} 项未展开` : ''
+    return `${intro}已读取 ${pathLabel}，本次列出 ${contentItems.length}/${contentTotalItems || contentItems.length} 项${truncated}：${contentItems.map(contentItemLine).join('；')}。全程只读，没有改文件、提交、推送、评论、合并或访问凭证。`
+  }
   if (pullDetail) {
     const filesSummary = pullFiles.length
       ? `已读取 ${pullFiles.length} 个改动文件：${pullFiles.map(pullFileLine).join('；')}。`
@@ -434,6 +660,7 @@ export async function readGitHubMission({
   commentLimit = DEFAULT_COMMENT_LIMIT,
   pullFileLimit = DEFAULT_PR_FILE_LIMIT,
   pullReviewLimit = DEFAULT_PR_REVIEW_LIMIT,
+  contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
   signal,
 } = {}) {
   const text = missionText(mission, input)
@@ -494,6 +721,7 @@ export async function readGitHubMission({
   const includeIssues = wantsIssues(text)
   const pullNumber = target.pullNumber || extractGitHubPullNumber(text)
   const issueNumber = target.issueNumber || extractGitHubIssueNumber(text)
+  const contentRequest = extractGitHubContentRequest(text)
   const state = issueStateForText(text)
   let issues = []
   let issueDetail = null
@@ -501,6 +729,10 @@ export async function readGitHubMission({
   let pullDetail = null
   let pullFiles = []
   let pullReviews = []
+  let contentDetail = null
+  let contentItems = []
+  let contentTotalItems = 0
+  let contentTruncated = false
 
   if (repo && pullNumber) {
     const pullUrl = `${repoUrl}/pulls/${pullNumber}`
@@ -642,6 +874,38 @@ export async function readGitHubMission({
         })
       }
     }
+  } else if (repo && contentRequest) {
+    const isReadme = contentRequest.kind === 'readme'
+    const pathPart = isReadme ? 'readme' : `contents${contentRequest.path ? `/${encodeGitHubPath(contentRequest.path)}` : ''}`
+    const refPart = contentRequest.ref ? `?ref=${encodeURIComponent(contentRequest.ref)}` : ''
+    const contentUrl = `${repoUrl}/${pathPart}${refPart}`
+    const contentResult = await readJson(fetchJson, { url: contentUrl, headers, signal })
+    const tool = isReadme ? 'github.readme.get' : 'github.contents.get'
+    if (contentResult.ok) {
+      const compacted = compactContentResult(contentResult.body, contentRequest, contentEntryLimit)
+      contentDetail = compacted.detail
+      contentItems = compacted.items
+      contentTotalItems = compacted.totalItems
+      contentTruncated = compacted.truncated
+      stages.push({
+        tool,
+        status: 'ok',
+        url: contentUrl,
+        summary: contentDetail
+          ? `读取仓库文件 ${contentDetail.path || contentRequest.path || 'README'} 成功。`
+          : `读取仓库目录 ${contentRequest.path || '/'} 成功：${contentItems.length}/${contentTotalItems || contentItems.length} 项。`,
+      })
+    } else {
+      const reason = failureText(contentResult, tool)
+      failures.push({ tool, url: contentUrl, reason, status: contentResult.status })
+      stages.push({
+        tool,
+        status: 'failed',
+        url: contentUrl,
+        summary: `读取仓库内容 ${contentRequest.path || 'README'} 失败：${reason}`,
+        reason,
+      })
+    }
   } else if (repo && includeIssues) {
     const limit = Math.max(1, Math.min(Number(issueLimit) || DEFAULT_ISSUE_LIMIT, 20))
     const issuesUrl = `${repoUrl}/issues?state=${encodeURIComponent(state)}&per_page=${limit}`
@@ -675,6 +939,11 @@ export async function readGitHubMission({
     pullDetail,
     pullFiles,
     pullReviews,
+    contentRequest,
+    contentDetail,
+    contentItems,
+    contentTotalItems,
+    contentTruncated,
     includeIssues,
     state,
     failures,
@@ -682,12 +951,13 @@ export async function readGitHubMission({
   const ok = !!repo
     && (!pullNumber || (!!pullDetail && !failures.some(item => /^github\.(?:pull|issue\.comments)/.test(item.tool))))
     && (!issueNumber || (!!issueDetail && !failures.some(item => item.tool === 'github.issue.comments.list')))
+    && (!contentRequest || ((!!contentDetail || contentItems.length > 0) && !failures.some(item => /^github\.(?:contents|readme)/.test(item.tool))))
     && (!includeIssues || !!pullNumber || !!issueNumber || !failures.some(item => item.tool === 'github.issues.list'))
   const sourceTools = unique(stages.map(stage => stage.tool))
   return {
     kind: 'mcp-github-read-result',
     ok,
-    mode: pullNumber ? 'github-pull-detail' : (issueNumber ? 'github-issue-detail' : (includeIssues ? 'github-issues' : 'github-repo')),
+    mode: pullNumber ? 'github-pull-detail' : (issueNumber ? 'github-issue-detail' : (contentRequest ? 'github-content' : (includeIssues ? 'github-issues' : 'github-repo'))),
     target,
     repo,
     issues,
@@ -696,6 +966,11 @@ export async function readGitHubMission({
     pullDetail,
     pullFiles,
     pullReviews,
+    contentRequest,
+    contentDetail,
+    contentItems,
+    contentTotalItems,
+    contentTruncated,
     sourceTools,
     failures,
     stages,
@@ -709,9 +984,11 @@ export async function readGitHubMission({
       pullDetail ? `${pullLine(pullDetail)} ${pullDetail.htmlUrl}`.trim() : '',
       ...pullFiles.map((file, index) => `PR 文件 ${index + 1}：${pullFileLine(file, index)} ${file.blobUrl}`.trim()),
       ...pullReviews.map((review, index) => `PR review ${index + 1}：${pullReviewLine(review, index)} ${review.htmlUrl}`.trim()),
+      contentDetail ? `仓库文件：${contentDetailLine(contentDetail)} ${contentDetail.htmlUrl}`.trim() : '',
+      ...contentItems.map((item, index) => `仓库目录项 ${index + 1}：${contentItemLine(item, index)} ${item.htmlUrl}`.trim()),
       ...comments.map((comment, index) => `评论 ${index + 1}：${commentLine(comment, index)} ${comment.htmlUrl}`.trim()),
       ...failures.map(item => `GitHub 读取失败：${item.tool} ${item.url}（${item.reason}）`),
-      '只读边界：未写评论、未改 issue/PR、未合并 PR、未推送代码、未读取本地凭证。',
+      '只读边界：未写评论、未改 issue/PR/文件、未合并 PR、未推送代码、未读取本地凭证。',
     ].filter(Boolean),
   }
 }

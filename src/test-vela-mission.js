@@ -255,6 +255,138 @@ try {
   assert(githubPullReadResult.pullReviews.at(-1).state === 'APPROVED', 'GitHub reader keeps PR review state')
   assert(githubPullReadResult.summary.includes('Read pull request files and reviews'), 'GitHub reader summarizes PR detail')
   assert(githubPullReadResult.summary.includes('src/vela/github-reader.js'), 'GitHub reader summarizes PR changed files')
+  const githubContentTarget = githubReader.extractGitHubTarget('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/blob/main/package.json')
+  const githubContentRequest = githubReader.extractGitHubContentRequest('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/blob/main/package.json')
+  const githubIssuesFileRequest = githubReader.extractGitHubContentRequest('用 GitHub 查看 yeyunzhou-26/Vela 文件 src/issues.js')
+  assert(githubContentTarget.owner === 'yeyunzhou-26' && githubContentTarget.repo === 'Vela', 'GitHub reader extracts repository target from content URL')
+  assert(githubContentRequest.path === 'package.json', 'GitHub reader extracts content path from blob URL')
+  assert(githubContentRequest.ref === 'main', 'GitHub reader extracts content ref from blob URL')
+  assert(githubIssuesFileRequest.path === 'src/issues.js', 'GitHub reader treats issue-named paths as repository content')
+  const githubContentReadResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/blob/main/package.json',
+      goal: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/blob/main/package.json',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      if (url.includes('/contents/package.json?ref=main')) {
+        return {
+          type: 'file',
+          name: 'package.json',
+          path: 'package.json',
+          encoding: 'base64',
+          content: 'ewogICJuYW1lIjogInZlbGEiLAogICJzY3JpcHRzIjogewogICAgImNoZWNrOnZlbGEiOiAibnBtIHJ1biB0ZXN0OnZlbGEtbWlzc2lvbiIKICB9Cn0K',
+          size: 88,
+          sha: 'content-sha',
+          html_url: 'https://github.com/yeyunzhou-26/Vela/blob/main/package.json',
+          download_url: 'https://raw.githubusercontent.com/yeyunzhou-26/Vela/main/package.json',
+        }
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-22T12:30:00Z',
+      }
+    },
+  })
+  assert(githubContentReadResult.ok === true, 'GitHub reader completes content file lookup')
+  assert(githubContentReadResult.mode === 'github-content', 'GitHub reader records content mode')
+  assert(githubContentReadResult.sourceTools.includes('github.contents.get'), 'GitHub reader records contents endpoint')
+  assert(githubContentReadResult.contentDetail.path === 'package.json', 'GitHub reader keeps content file path')
+  assert(githubContentReadResult.contentDetail.contentExcerpt.includes('check:vela'), 'GitHub reader decodes content file excerpt')
+  assert(githubContentReadResult.summary.includes('package.json'), 'GitHub reader summarizes content file')
+  assert(githubContentReadResult.evidence.some(item => item.includes('未改 issue/PR/文件')), 'GitHub reader records content read-only boundary evidence')
+  const githubDirectoryReadResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/tree/main/src/ui/vela 的目录结构',
+      goal: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/tree/main/src/ui/vela 的目录结构',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      if (url.includes('/contents/src/ui/vela?ref=main')) {
+        return [
+          {
+            type: 'file',
+            name: 'app-shell.js',
+            path: 'src/ui/vela/app-shell.js',
+            size: 2048,
+            sha: 'app-shell-sha',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/blob/main/src/ui/vela/app-shell.js',
+          },
+          {
+            type: 'dir',
+            name: 'styles',
+            path: 'src/ui/vela/styles',
+            size: 0,
+            sha: 'styles-sha',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/tree/main/src/ui/vela/styles',
+          },
+        ]
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-22T12:40:00Z',
+      }
+    },
+  })
+  assert(githubDirectoryReadResult.ok === true, 'GitHub reader completes content directory lookup')
+  assert(githubDirectoryReadResult.contentItems.length === 2, 'GitHub reader keeps directory entries')
+  assert(githubDirectoryReadResult.summary.includes('src/ui/vela/app-shell.js'), 'GitHub reader summarizes directory entries')
+  const githubReadmeReadResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 查看 yeyunzhou-26/Vela README',
+      goal: '用 GitHub 查看 yeyunzhou-26/Vela README',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      if (url.includes('/readme')) {
+        return {
+          type: 'file',
+          name: 'README.md',
+          path: 'README.md',
+          encoding: 'base64',
+          content: 'IyBWZWxhCk1pc3Npb24tZmlyc3QgQUkgT3BlcmF0aW5nIERlc2sK',
+          size: 39,
+          sha: 'readme-sha',
+          html_url: 'https://github.com/yeyunzhou-26/Vela/blob/main/README.md',
+          download_url: 'https://raw.githubusercontent.com/yeyunzhou-26/Vela/main/README.md',
+        }
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-22T12:45:00Z',
+      }
+    },
+  })
+  assert(githubReadmeReadResult.ok === true, 'GitHub reader completes README lookup')
+  assert(githubReadmeReadResult.sourceTools.includes('github.readme.get'), 'GitHub reader records README endpoint')
+  assert(githubReadmeReadResult.contentDetail.contentExcerpt.includes('Mission-first AI Operating Desk'), 'GitHub reader decodes README excerpt')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -1062,6 +1194,55 @@ try {
   assert(githubPullStages.some(item => item.toolName === 'github.pull.reviews.list' && item.result === 'ok'), 'async GitHub PR command records reviews read stage')
   assert(githubPullStages.some(item => item.toolName === 'github.issue.comments.list' && item.result === 'ok'), 'async GitHub PR command records issue comments stage')
   assert(githubPullStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub PR command records skipped write-action stage')
+
+  runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 https://github.com/yeyunzhou-26/Vela/blob/main/src/vela/github-reader.js 的源码',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const githubContentReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async ({ url }) => {
+        if (url.includes('/contents/src/vela/github-reader.js?ref=main')) {
+          return {
+            type: 'file',
+            name: 'github-reader.js',
+            path: 'src/vela/github-reader.js',
+            encoding: 'base64',
+            content: 'ZXhwb3J0IGZ1bmN0aW9uIHJlYWRHaXRIdWJNaXNzaW9uKCkgewogIHJldHVybiAiY29udGVudCByZWFkZXIiCn0K',
+            size: 68,
+            sha: 'github-reader-content-sha',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/blob/main/src/vela/github-reader.js',
+            download_url: 'https://raw.githubusercontent.com/yeyunzhou-26/Vela/main/src/vela/github-reader.js',
+          }
+        }
+        return {
+          full_name: 'yeyunzhou-26/Vela',
+          name: 'Vela',
+          owner: { login: 'yeyunzhou-26' },
+          html_url: 'https://github.com/yeyunzhou-26/Vela',
+          description: 'Mission-first AI Operating Desk',
+          default_branch: 'main',
+          stargazers_count: 0,
+          forks_count: 0,
+          open_issues_count: 1,
+          visibility: 'public',
+          updated_at: '2026-06-22T12:35:00Z',
+        }
+      },
+    },
+  })
+  assert(githubContentReviewing.state === 'Reviewing', 'async GitHub content command moves to reviewing')
+  assert(githubContentReviewing.toolCalls.at(-1).result.includes('github.contents.get'), 'async GitHub content command records contents source tool')
+  assert(githubContentReviewing.artifacts.at(-1).summary.includes('src/vela/github-reader.js'), 'async GitHub content command summarizes file path')
+  assert(githubContentReviewing.artifacts.at(-1).summary.includes('content reader'), 'async GitHub content command summarizes file excerpt')
+  assert(githubContentReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('github-reader.js')), 'async GitHub content command keeps file evidence')
+  const githubContentToolId = githubContentReviewing.toolCalls.at(-1).id
+  const githubContentStages = githubContentReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubContentToolId)
+  assert(githubContentStages.some(item => item.toolName === 'github.contents.get' && item.result === 'ok'), 'async GitHub content command records contents read stage')
+  assert(githubContentStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub content command records skipped write-action stage')
 
   runtime.applyCurrentMissionCommand({
     text: '用 github 工具查看 missing-owner/missing-repo issue',
