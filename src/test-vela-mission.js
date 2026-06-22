@@ -50,11 +50,17 @@ try {
       sourceTools: ['web_search', 'fetch_url'],
       summary: '已围绕「Vela 浏览器能力」完成网页搜索和读取。',
       evidence: ['搜索查询：Vela 浏览器能力', 'Capability Map：https://example.com/capability（direct）'],
+      observations: [{ title: 'Capability Map', url: 'https://example.com/capability', source: 'direct', summary: 'Vela browser capability map.' }],
+      proposedActions: [{ action: 'summarize', label: '总结页面并给出结论', risk: 'Read', status: 'ready', requiresConfirmation: false }],
+      recoveryHints: [],
     },
   })
   assert(browserAdapterLiveRun.toolCall.result.includes('web_search + fetch_url'), 'browser adapter result records live web tools')
   assert(browserAdapterLiveRun.artifact.summary.includes('网页搜索和读取'), 'browser adapter artifact uses live web summary')
-  assert(browserAdapterLiveRun.reviewCheck.evidence.at(-1).includes('example.com'), 'browser adapter review uses live evidence')
+  assert(browserAdapterLiveRun.artifact.summary.includes('下一步建议'), 'browser adapter artifact includes action-space next step')
+  assert(browserAdapterLiveRun.reviewCheck.evidence.some(item => item.includes('example.com')), 'browser adapter review uses live evidence')
+  assert(browserAdapterLiveRun.reviewCheck.evidence.some(item => item.includes('页面观察')), 'browser adapter review keeps page observations')
+  assert(browserAdapterLiveRun.reviewCheck.evidence.some(item => item.includes('建议动作')), 'browser adapter review keeps proposed actions')
   const mcpCapability = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue')[0]
   assert(mcpCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub tool tasks to MCP bridge')
   assert(mcpCapability.riskClasses.includes('Network'), 'MCP bridge capability declares network risk')
@@ -1601,7 +1607,10 @@ try {
   assert(liveBrowserReviewing.state === 'Reviewing', 'async browser command moves to reviewing')
   assert(liveBrowserReviewing.toolCalls.at(-1).result.includes('fetch_url'), 'async browser command records live fetch tool')
   assert(liveBrowserReviewing.artifacts.at(-1).summary.includes('Vela Live Browser Source'), 'async browser command writes live source summary')
+  assert(liveBrowserReviewing.artifacts.at(-1).summary.includes('下一步建议'), 'async browser command writes action-space next step')
   assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('example.com/vela')), 'async browser command review keeps source evidence')
+  assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('页面观察')), 'async browser command review keeps page observations')
+  assert(liveBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('建议动作')), 'async browser command review keeps proposed actions')
   const liveBrowserReadToolId = liveBrowserReviewing.toolCalls.at(-1).id
   const liveBrowserFetchStage = liveBrowserReviewing.trace.find(item => (
     item.type === 'tool.stage'
@@ -1639,6 +1648,8 @@ try {
   assert(failedBrowserReviewing.toolCalls.at(-1).status === 'failed', 'failed browser command records failed tool call')
   assert(failedBrowserReviewing.reviewChecks.at(-1).outcome === 'failed', 'failed browser command records failed review check')
   assert(failedBrowserReviewing.reviewChecks.at(-1).failures.some(item => item.includes('captcha required')), 'failed browser command records browser failure reason')
+  assert(failedBrowserReviewing.artifacts.at(-1).summary.includes('恢复建议'), 'failed browser command artifact includes recovery hint')
+  assert(failedBrowserReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('恢复建议')), 'failed browser command review keeps recovery hints')
   assert(failedBrowserReviewing.recoveryActions.some(item => item.source === 'review_blocked' && item.status === 'open'), 'failed browser command opens review recovery action')
   const failedBrowserReadToolId = failedBrowserReviewing.toolCalls.at(-1).id
   const failedBrowserStages = failedBrowserReviewing.trace.filter(item => (

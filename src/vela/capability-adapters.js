@@ -691,9 +691,34 @@ function normalizeBrowserReadResult(value) {
     sourceTools: normalizeArray(value.sourceTools).map(item => asText(item)).filter(Boolean),
     failures: normalizeArray(value.failures),
     pages: normalizeArray(value.pages),
+    observations: normalizeArray(value.observations),
+    proposedActions: normalizeArray(value.proposedActions),
+    recoveryHints: normalizeArray(value.recoveryHints).map(item => asText(item)).filter(Boolean),
     stages: normalizeArray(value.stages).map(normalizeBrowserStage),
     urls: normalizeArray(value.urls).map(item => asText(item)).filter(Boolean),
   }
+}
+
+function browserActionSpaceSummary(readResult = null) {
+  if (!readResult) return ''
+  const action = normalizeArray(readResult.proposedActions).find(item => asText(item.status) === 'ready')
+  const recovery = normalizeArray(readResult.recoveryHints)[0]
+  if (action) return `下一步建议：${asText(action.label, '继续总结页面')}。`
+  if (recovery) return `恢复建议：${recovery}`
+  return ''
+}
+
+function browserActionSpaceEvidence(readResult = null) {
+  if (!readResult) return []
+  return [
+    ...normalizeArray(readResult.observations).map((item, index) => (
+      `页面观察 ${index + 1}：${asText(item.title, '网页')} ${asText(item.url)}（${asText(item.source, 'browser')}）${item.summary ? `；${asText(item.summary)}` : ''}`
+    )),
+    ...normalizeArray(readResult.proposedActions).map((item, index) => (
+      `建议动作 ${index + 1}：${asText(item.label, item.action)}；risk=${asText(item.risk, 'Read')}；status=${asText(item.status, 'ready')}；confirmation=${item.requiresConfirmation === true ? 'yes' : 'no'}`
+    )),
+    ...normalizeArray(readResult.recoveryHints).map((item, index) => `恢复建议 ${index + 1}：${asText(item)}`),
+  ].filter(Boolean)
 }
 
 function normalizeBrowserStage(stage = {}, index = 0) {
@@ -779,7 +804,7 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
   const artifactId = makeAdapterResultId('browser.web-agent')
   const readResult = normalizeBrowserReadResult(input.capabilityAdapterResult)
   const ok = readResult ? readResult.ok : true
-  const summary = readResult?.summary || browserExecutionSummary(mission)
+  const summary = [readResult?.summary || browserExecutionSummary(mission), browserActionSpaceSummary(readResult)].filter(Boolean).join(' ')
   const artifactUri = `vela://capabilities/browser.web-agent/results/${prepareTool.id}`
   const sourceTools = readResult?.sourceTools?.length
     ? `；底层工具：${readResult.sourceTools.join(' + ')}`
@@ -820,6 +845,7 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
         : '浏览器读取没有拿到可用内容，已保留失败证据并等待调整。',
       evidence: readResult?.evidence?.length
         ? readResult.evidence
+          .concat(browserActionSpaceEvidence(readResult))
         : [
             summary,
             `准备工具调用：${prepareTool.id}`,

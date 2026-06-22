@@ -47,6 +47,9 @@ try {
   assert(directRead.summary.includes('Vela Browser Notes'), 'direct URL summary includes page title')
   assert(directRead.evidence.at(-1).includes('example.com/vela'), 'direct URL evidence includes source URL')
   assert(directRead.pages.at(-1).ok === true, 'direct URL stores a compact successful page')
+  assert(directRead.observations.at(0).title === 'Vela Browser Notes', 'direct URL stores page observation')
+  assert(directRead.proposedActions.some(item => item.status === 'ready' && item.risk === 'Read'), 'direct URL proposes a read-only next action')
+  assert(directRead.proposedActions.some(item => item.requiresConfirmation === true), 'direct URL marks broader browser actions for confirmation')
   assert(directNoBrowserFallback === true, 'direct URL disables implicit browser fallback')
 
   const escalatedCalls = []
@@ -111,6 +114,7 @@ try {
   assert(browserFailedRead.ok === false, 'browser failure remains non-ok after fallback fails')
   assert(browserFailedRead.failures.at(-1).tool === 'browser_read', 'browser failure records browser_read as final failed tool')
   assert(browserFailedRead.summary.includes('captcha required'), 'browser failure summary includes recovery reason')
+  assert(browserFailedRead.recoveryHints.some(item => item.includes('验证码') || item.includes('登录')), 'browser failure records recovery hints')
 
   const calls = []
   const searchRead = await reader.readBrowserMission({
@@ -151,6 +155,8 @@ try {
   assert(searchRead.mode === 'search', 'search mission records search mode')
   assert(searchRead.sourceTools.join('+') === 'web_search+fetch_url', 'search mission records search and fetch tools')
   assert(searchRead.pages.length === 2, 'search mission fetches top sources')
+  assert(searchRead.observations.length === 2, 'search mission stores page observations')
+  assert(searchRead.proposedActions.some(item => item.label.includes('Vela')), 'search mission action plan keeps search subject')
   assert(calls.some(call => call[0] === 'search'), 'search mission calls web search')
   assert(calls.filter(call => call[0] === 'fetch').length === 2, 'search mission fetches two result URLs')
   assert(searchRead.summary.includes('Capability Map'), 'search summary includes fetched source titles')
@@ -170,6 +176,7 @@ try {
   assert(failedSearch.ok === false, 'failed search returns non-ok result')
   assert(failedSearch.summary.includes('没有读到可用网页内容'), 'failed search summary is user-readable')
   assert(failedSearch.evidence.some(item => item.includes('搜索失败')), 'failed search records evidence')
+  assert(failedSearch.recoveryHints.length >= 1, 'failed search records recovery hints')
 } catch (err) {
   console.error(err)
   failed += 1

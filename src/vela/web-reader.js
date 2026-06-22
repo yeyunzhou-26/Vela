@@ -110,6 +110,61 @@ function summarizePages({ query = '', mode = 'url', searchSource = '', pages = [
   return `${intro}${sourceLine}要点：${findings}`
 }
 
+function browserObservationsForPages(pages = []) {
+  return normalizeArray(pages).map((page, index) => ({
+    title: asText(page.title, `来源 ${index + 1}`),
+    url: asText(page.final_url || page.url),
+    source: asText(page.fetch_source || page.tool, 'fetch_url'),
+    summary: compactContent(page.content || page.snippet || page.hint, 220),
+  })).filter(item => item.url || item.summary)
+}
+
+function browserProposedActions({ mode = 'url', query = '', pages = [] } = {}) {
+  if (!pages.length) return []
+  const subject = mode === 'search' ? `「${query || '搜索结果'}」` : '已读取网页'
+  return [
+    {
+      action: 'summarize',
+      label: `总结${subject}并给出可执行结论`,
+      risk: 'Read',
+      status: 'ready',
+      requiresConfirmation: false,
+      reason: '基于已读取页面内容生成摘要，不产生外部副作用。',
+    },
+    {
+      action: 'continue-browsing',
+      label: '继续打开相关页面或执行点击/填写前的页面观察',
+      risk: 'Network',
+      status: 'needs-confirmation',
+      requiresConfirmation: true,
+      reason: '继续访问新页面或准备交互会扩大网页范围；提交、发送、登录仍需 Guard。',
+    },
+  ]
+}
+
+function browserRecoveryHints(failures = [], stages = []) {
+  const hints = []
+  for (const failure of normalizeArray(failures)) {
+    const reason = asText(failure.reason || failure.error || failure.hint)
+    if (/captcha|验证码/i.test(reason)) hints.push('页面需要验证码或登录时，先请求用户确认屏幕/凭据边界，再使用真实浏览器观察。')
+    if (/javascript|render|browser_read|no readable content/i.test(reason)) hints.push('轻量读取失败时，改用 browser_read 渲染页面并保留失败 stage。')
+    if (/403|429|blocked|access denied|cloudflare/i.test(reason)) hints.push('来源阻止读取时，换可访问来源或让用户确认是否使用登录态浏览器。')
+    if (reason && !hints.length) hints.push(`调整网址、搜索词或读取方式后重试：${reason}`)
+  }
+  if (!hints.length && normalizeArray(stages).some(stage => stage.status === 'failed')) {
+    hints.push('有读取阶段失败；保留失败证据后，可换来源或升级到浏览器渲染。')
+  }
+  return unique(hints)
+}
+
+function browserActionSpace({ mode = 'url', query = '', pages = [], failures = [], stages = [] } = {}) {
+  return {
+    observations: browserObservationsForPages(pages),
+    proposedActions: browserProposedActions({ mode, query, pages }),
+    recoveryHints: browserRecoveryHints(failures, stages),
+  }
+}
+
 async function runWebSearch(webSearch, query, context) {
   const raw = await withToolTimeout(
     nextContext => webSearch({ query, limit: 4 }, nextContext),
@@ -304,6 +359,7 @@ export async function readBrowserMission({
   if (urls.length) {
     const { pages, failures, stages } = await fetchReadablePages(urls, { fetchUrl, browserRead }, context)
     const summary = summarizePages({ mode: 'url', pages, failures })
+    const actionSpace = browserActionSpace({ mode: 'url', pages, failures, stages })
     return {
       kind: 'browser-read-result',
       ok: pages.length > 0,
@@ -314,6 +370,7 @@ export async function readBrowserMission({
       pages,
       failures,
       stages,
+      ...actionSpace,
       summary,
       evidence: [
         ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
@@ -337,6 +394,8 @@ export async function readBrowserMission({
       searchSource: searchPayload.source,
       failures: [{ reason: searchPayload.error || searchPayload.hint || '搜索失败' }],
     })
+    const failures = [{ tool: 'web_search', reason: searchPayload.error || searchPayload.hint || '搜索失败' }]
+    const actionSpace = browserActionSpace({ mode: 'search', query, failures })
     return {
       kind: 'browser-read-result',
       ok: false,
@@ -345,7 +404,8 @@ export async function readBrowserMission({
       urls: [],
       sourceTools: ['web_search'],
       pages: [],
-      failures: [{ tool: 'web_search', reason: searchPayload.error || searchPayload.hint || '搜索失败' }],
+      failures,
+      ...actionSpace,
       summary,
       evidence: [
         `搜索查询：${query}`,
@@ -364,6 +424,7 @@ export async function readBrowserMission({
     pages,
     failures,
   })
+  const actionSpace = browserActionSpace({ mode: 'search', query, pages, failures, stages })
   return {
     kind: 'browser-read-result',
     ok: pages.length > 0,
@@ -374,6 +435,7 @@ export async function readBrowserMission({
     pages,
     failures,
     stages,
+    ...actionSpace,
     summary,
     evidence: [
       `搜索查询：${query}`,
