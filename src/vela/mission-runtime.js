@@ -949,22 +949,35 @@ function externalMessageDesktopTarget(mission = {}) {
   return { appName: '消息应用', appUrl: 'app://messages' }
 }
 
+function externalMessageExecutionProfile(target = {}) {
+  const channelUrl = asText(target.appUrl, 'app://messages')
+  const adapterKey = asText(channelUrl.replace(/^app:\/\//, '').replace(/[^a-z0-9-]+/gi, '-'), 'messages')
+  return {
+    executionMode: 'simulated',
+    adapterStatus: 'real-adapter-pending',
+    realAdapterEntry: `desktop://adapters/${adapterKey}/messages.confirmed-send`,
+    modeSummary: '当前为模拟执行链路；真实适配器接入前不会打开应用、读取真实屏幕或发送。',
+  }
+}
+
 function externalMessageDraftPayload(mission = {}) {
   const target = externalMessageDesktopTarget(mission)
   const recipient = externalMessageRecipient(mission)
   const draftText = draftExternalMessageText(mission)
+  const executionProfile = externalMessageExecutionProfile(target)
   return {
     channel: target.appName,
     channelUrl: target.appUrl,
     recipient,
     draftText,
     sendPreview: `发给${recipient}（${target.appName}）：${draftText}`,
-    guardrail: '用户明确确认前不发送；确认后才记录发送动作。',
+    guardrail: '用户明确确认前不发送；确认后只记录模拟发送，真实适配器接入后仍走同一确认闸门。',
+    ...executionProfile,
   }
 }
 
 function externalMessagePayloadSummary(payload = {}) {
-  return `渠道：${asText(payload.channel, '消息应用')}；对象：${asText(payload.recipient, '对方')}；内容：「${asText(payload.draftText)}」；Guard：${asText(payload.guardrail)}`
+  return `渠道：${asText(payload.channel, '消息应用')}；对象：${asText(payload.recipient, '对方')}；内容：「${asText(payload.draftText)}」；模式：模拟链路；Adapter：${asText(payload.adapterStatus, 'real-adapter-pending')}；真实适配器入口：${asText(payload.realAdapterEntry)}；Guard：${asText(payload.guardrail)}`
 }
 
 function hasExternalMessageDesktopContext(mission = {}) {
@@ -978,7 +991,7 @@ function appendExternalMessageDesktopContext(mission = {}) {
   const artifactId = makeId('artifact-desktop-context')
   const target = externalMessageDesktopTarget(mission)
   const payload = externalMessageDraftPayload(mission)
-  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；目标对象：${payload.recipient}；没有真实打开应用、截图、读取真实屏幕或发送消息。`
+  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；目标对象：${payload.recipient}；执行模式为模拟链路；没有真实打开应用、截图、读取真实屏幕或发送消息。`
 
   appendCurrentMissionToolCall({
     id: toolCallId,
@@ -1008,6 +1021,16 @@ function appendExternalMessageDesktopContext(mission = {}) {
     url: 'screen://mock/current-chat',
     planStepId,
     summary: '模拟读取当前对话上下文，未截图或读取真实屏幕。',
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'desktop.real-adapter',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'external-message-real-adapter-pending',
+    url: payload.realAdapterEntry,
+    planStepId,
+    summary: `真实${target.appName}桌面适配器尚未接入，本次只记录模拟上下文。`,
   })
   appendCurrentMissionToolStage({
     toolName: 'desktop.external-effect',
@@ -1040,6 +1063,9 @@ function appendExternalMessageDesktopContext(mission = {}) {
       `目标应用：${target.appName}`,
       `消息对象：${payload.recipient}`,
       `发送草稿预览：${payload.sendPreview}`,
+      `执行模式：${payload.executionMode}`,
+      `适配器状态：${payload.adapterStatus}`,
+      `真实适配器入口：${payload.realAdapterEntry}`,
       `模拟打开：${target.appUrl}`,
       '模拟屏幕上下文：screen://mock/current-chat',
       '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
@@ -1080,7 +1106,7 @@ function hasExternalMessageSendResult(mission = {}) {
 
 function externalMessageSendReceiptSummary(mission = {}) {
   const payload = externalMessageDraftPayload(mission)
-  return `已按确认通过${payload.channel}发给${payload.recipient}：「${payload.draftText}」。`
+  return `已按确认记录${payload.channel}模拟发送给${payload.recipient}：「${payload.draftText}」。`
 }
 
 function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
@@ -1092,7 +1118,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
   const draftText = payload.draftText
   const toolCallId = makeId('tool-messages-outbound-send')
   const artifactId = makeId('artifact-send-receipt')
-  const summary = `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；接入真实应用发送前仍必须由 External message 确认触发。`
+  const summary = `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；真实${target.appName}发送入口 ${payload.realAdapterEntry} 尚未接入，接入后仍必须由 External message 确认触发。`
 
   appendCurrentMissionAgentAction({
     role: 'Operator',
@@ -1122,6 +1148,16 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
     planStepId: 'confirm-send',
     summary: `根据用户确认记录模拟发送给${payload.recipient}：「${draftText}」。`,
   })
+  appendCurrentMissionToolStage({
+    toolName: 'messages.real-adapter',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'confirmed-send-real-adapter-pending',
+    url: payload.realAdapterEntry,
+    planStepId: 'confirm-send',
+    summary: `真实${target.appName}发送适配器尚未接入；没有调用真实外部应用发送接口。`,
+  })
   appendCurrentMissionArtifact({
     id: artifactId,
     title: '发送回执',
@@ -1144,6 +1180,9 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
       `目标应用：${target.appName}`,
       `发送对象：${payload.recipient}`,
       `发送内容：${draftText}`,
+      `执行模式：${payload.executionMode}`,
+      `适配器状态：${payload.adapterStatus}`,
+      `真实适配器入口：${payload.realAdapterEntry}`,
       '发送阶段发生在 External message 权限批准之后。',
       '当前为模拟发送回执，未调用真实外部应用发送接口。',
     ],

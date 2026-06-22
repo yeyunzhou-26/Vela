@@ -272,6 +272,16 @@ function desktopTarget(mission = {}, input = {}) {
   return { appId: 'desktop-app', appName: '目标应用', appUrl: 'app://target' }
 }
 
+function desktopExecutionProfile(target = {}) {
+  const appId = asText(target.appId, 'desktop-app')
+  return {
+    executionMode: 'simulated',
+    adapterStatus: 'real-adapter-pending',
+    realAdapterEntry: `desktop://adapters/${appId}/screen-context`,
+    modeSummary: '当前为模拟桌面控制链路；真实适配器接入前不会打开应用、截图、读取真实屏幕或触发外部效果。',
+  }
+}
+
 function planDesktopAdapterRun(mission = {}, input = {}) {
   const capability = primaryDesktopCapability(mission)
   if (capability?.id !== 'desktop.app-control') return null
@@ -279,7 +289,8 @@ function planDesktopAdapterRun(mission = {}, input = {}) {
   const planStepId = activePlanStepId(mission.plan, 'inspect-context')
   const toolCallId = makeAdapterToolId(capability.id)
   const target = desktopTarget(mission, input)
-  const summary = `桌面代理已准备好处理「${target.appName}」相关任务。当前原型只记录模拟打开应用和模拟读取上下文，不会真的打开应用、截图、读取真实屏幕或发送消息；接入真实桌面控制前必须经过 Screen/Execute Guard。`
+  const profile = desktopExecutionProfile(target)
+  const summary = `桌面代理已准备好处理「${target.appName}」相关任务。当前原型只记录模拟打开应用和模拟读取上下文，不会真的打开应用、截图、读取真实屏幕或发送消息；真实适配器入口为 ${profile.realAdapterEntry}，接入真实桌面控制前必须经过 Screen/Execute Guard。`
   return {
     capability,
     toolCall: {
@@ -869,7 +880,8 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
 }
 
 function desktopExecutionSummary(target = {}) {
-  return `已完成「${target.appName}」桌面控制原型链路：模拟打开应用、模拟读取当前上下文，并确认没有真实启动应用、截图、读取真实屏幕或发送外部消息。`
+  const profile = desktopExecutionProfile(target)
+  return `已完成「${target.appName}」桌面控制原型链路：模拟打开应用、模拟读取当前上下文，并确认没有真实启动应用、截图、读取真实屏幕或发送外部消息。执行模式：${profile.executionMode}；真实适配器入口：${profile.realAdapterEntry}。`
 }
 
 function executeDesktopAdapterRun(mission = {}, input = {}) {
@@ -883,9 +895,13 @@ function executeDesktopAdapterRun(mission = {}, input = {}) {
   const toolCallId = makeAdapterToolId('desktop.app-control.inspect')
   const artifactId = makeAdapterResultId('desktop.app-control')
   const target = desktopTarget(mission, input)
+  const profile = desktopExecutionProfile(target)
   const summary = desktopExecutionSummary(target)
   const evidence = [
     `目标应用：${target.appName}`,
+    `执行模式：${profile.executionMode}`,
+    `适配器状态：${profile.adapterStatus}`,
+    `真实适配器入口：${profile.realAdapterEntry}`,
     `模拟打开：${target.appUrl}`,
     '模拟屏幕上下文：screen://mock/current-app',
     '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
@@ -939,6 +955,15 @@ function executeDesktopAdapterRun(mission = {}, input = {}) {
         stage: 'desktop-screen-context',
         summary: '模拟读取当前 App 上下文，未截图或读取真实屏幕。',
         url: 'screen://mock/current-app',
+        planStepId,
+        role: 'Operator',
+      },
+      {
+        toolName: 'desktop.real-adapter',
+        status: 'skipped',
+        stage: 'desktop-real-adapter-pending',
+        summary: `真实${target.appName}桌面适配器尚未接入，本次只记录模拟上下文。`,
+        url: profile.realAdapterEntry,
         planStepId,
         role: 'Operator',
       },
