@@ -48,7 +48,7 @@ export const OPEN_CAPABILITY_REGISTRY = [
     category: 'tool',
     label: 'MCP 工具桥',
     summary: '把文件、Git、抓取、时间、记忆等成熟工具作为标准化能力接入。',
-    triggers: ['mcp', 'tool', '工具', '集成', '接入', '插件', 'github', 'git', '文件系统', '数据库'],
+    triggers: ['mcp', 'tool', '工具', '集成', '接入', '插件', 'github', 'git', 'issue', 'pr', 'pull request', 'repo', 'repository', '仓库', '议题', '拉取请求', '文件系统', '数据库'],
     agentRole: 'Builder',
     riskClasses: ['Read', 'Write', 'Execute', 'Network'],
     permissionBoundary: '未知工具、写入、执行命令、网络访问和凭证使用必须走 Guard。',

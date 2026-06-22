@@ -652,12 +652,19 @@ function planAgentOrchestrationRun(mission = {}, input = {}) {
 }
 
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
-  return planBrowserAdapterRun(mission, input)
-    || planDesktopAdapterRun(mission, input)
-    || planFilesAdapterRun(mission, input)
-    || planMemoryAdapterRun(mission, input)
-    || planMcpBridgeRun(mission, input)
-    || planAgentOrchestrationRun(mission, input)
+  const planners = {
+    'browser.web-agent': planBrowserAdapterRun,
+    'desktop.app-control': planDesktopAdapterRun,
+    'files.document-work': planFilesAdapterRun,
+    'memory.context-os': planMemoryAdapterRun,
+    'tool.mcp-bridge': planMcpBridgeRun,
+    'agent.orchestration': planAgentOrchestrationRun,
+  }
+  for (const reference of normalizeArray(mission.capabilityReferences)) {
+    const run = planners[reference?.id]?.(mission, input)
+    if (run) return run
+  }
+  return null
 }
 
 function browserExecutionSummary(mission = {}) {
@@ -1247,12 +1254,19 @@ function executeAgentOrchestrationRun(mission = {}, input = {}) {
 }
 
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
-  return executeBrowserAdapterRun(mission, input)
-    || executeDesktopAdapterRun(mission, input)
-    || executeFilesAdapterRun(mission, input)
-    || executeMemoryAdapterRun(mission, input)
-    || executeMcpBridgeRun(mission, input)
-    || executeAgentOrchestrationRun(mission, input)
+  const executors = {
+    'browser.web-agent': executeBrowserAdapterRun,
+    'desktop.app-control': executeDesktopAdapterRun,
+    'files.document-work': executeFilesAdapterRun,
+    'memory.context-os': executeMemoryAdapterRun,
+    'tool.mcp-bridge': executeMcpBridgeRun,
+    'agent.orchestration': executeAgentOrchestrationRun,
+  }
+  for (const reference of normalizeArray(mission.capabilityReferences)) {
+    const run = executors[reference?.id]?.(mission, input)
+    if (run) return run
+  }
+  return null
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {

@@ -58,6 +58,17 @@ try {
   assert(mcpCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub tool tasks to MCP bridge')
   assert(mcpCapability.riskClasses.includes('Network'), 'MCP bridge capability declares network risk')
   assert(mcpCapability.integrationStatus === 'adapter-ready', 'MCP bridge capability is marked adapter-ready')
+  const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
+  assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
+  assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
+  const multiCapabilityPlan = capabilityAdapters.planCapabilityAdapterRun({
+    id: 'mission-mcp-report-adapter',
+    title: '用 github 工具查看 issue 并生成报告',
+    goal: '用 github 工具查看 issue 并生成报告',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: multiCapabilityRefs,
+  })
+  assert(multiCapabilityPlan.toolCall.toolName === 'tool.mcp-bridge.prepare', 'adapter dispatcher follows primary capability order before fixed adapter order')
   const mcpAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
     id: 'mission-mcp-adapter',
     title: '用 github 工具查看 issue',
@@ -617,6 +628,14 @@ try {
   const mcpStages = mcpCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === mcpRouteToolId)
   assert(mcpStages.some(item => item.toolName === 'mcp.candidate.github' && item.result === 'ok'), 'MCP command records GitHub candidate stage')
   assert(mcpStages.some(item => item.toolName === 'mcp.external-tool-execution' && item.result === 'skipped'), 'MCP command records skipped MCP execution')
+  const mcpReportMission = runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 issue 并生成报告',
+    source: 'test-command',
+  })
+  assert(mcpReportMission.capabilityReferences[0]?.id === 'tool.mcp-bridge', 'MCP report command keeps tool bridge as primary capability')
+  assert(mcpReportMission.capabilityReferences.some(item => item.id === 'files.document-work'), 'MCP report command keeps file capability as secondary')
+  const mcpReportRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(mcpReportRunning.toolCalls.at(-1).toolName === 'tool.mcp-bridge.prepare', 'MCP report command dispatches through primary capability order')
 
   const browserCommandMission = runtime.applyCurrentMissionCommand({
     text: '帮我打开网页搜索资料并总结',
