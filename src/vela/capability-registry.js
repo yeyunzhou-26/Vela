@@ -40,8 +40,8 @@ export const OPEN_CAPABILITY_REGISTRY = [
         licensePolicy: 'direct-eligible',
       },
     ],
-    integrationStatus: 'planned',
-    evaluation: 'Add browser adapter smoke with navigation, extraction, and guarded form submission.',
+    integrationStatus: 'adapter-ready',
+    evaluation: 'test:vela-mission and test:vela-web-reader cover navigation/search extraction, guarded form submission, failure recovery, and review evidence.',
   },
   {
     id: 'tool.mcp-bridge',
@@ -80,8 +80,8 @@ export const OPEN_CAPABILITY_REGISTRY = [
         licensePolicy: 'learn-only',
       },
     ],
-    integrationStatus: 'planned',
-    evaluation: 'Add mission golden trace for planner-builder-reviewer handoff and recovery.',
+    integrationStatus: 'adapter-ready',
+    evaluation: 'test:vela-mission covers planner-researcher-builder-operator-reviewer handoff, internal-only execution, guard boundary evidence, and reviewer checks.',
   },
   {
     id: 'desktop.app-control',

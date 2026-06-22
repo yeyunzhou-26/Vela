@@ -721,6 +721,9 @@ function applyCapabilityAdapterRun(current = {}, input = {}) {
   for (const reference of normalizeArray(run.memoryReferences)) {
     appendCurrentMissionMemoryReference(reference)
   }
+  for (const action of normalizeArray(run.agentActions)) {
+    appendCurrentMissionAgentAction(action)
+  }
   if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })
   if (run.permission) return appendCurrentMissionPermission(run.permission)
   return getCurrentMission()
@@ -741,6 +744,9 @@ function applyCapabilityAdapterExecution(current = {}, input = {}) {
   if (run.artifact) appendCurrentMissionArtifact(run.artifact)
   for (const reference of normalizeArray(run.memoryReferences)) {
     appendCurrentMissionMemoryReference(reference)
+  }
+  for (const action of normalizeArray(run.agentActions)) {
+    appendCurrentMissionAgentAction(action)
   }
   if (run.reviewCheck) appendCurrentMissionReviewCheck(run.reviewCheck)
   if (run.nextStep) updateCurrentMission({ nextStep: run.nextStep })

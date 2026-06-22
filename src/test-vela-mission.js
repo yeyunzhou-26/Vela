@@ -24,6 +24,7 @@ try {
   const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
   assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
   assert(browserCapability.riskClasses.includes('Network'), 'browser capability declares network risk')
+  assert(browserCapability.integrationStatus === 'adapter-ready', 'browser capability is marked adapter-ready')
   const urlCapability = capabilityRegistry.findOpenCapabilitiesForText('总结 https://example.com/vela')[0]
   assert(urlCapability.id === 'browser.web-agent', 'capability registry routes bare URLs to browser agent')
   const browserAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
@@ -55,6 +56,36 @@ try {
   assert(browserAdapterLiveRun.reviewCheck.evidence.at(-1).includes('example.com'), 'browser adapter review uses live evidence')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
+  assert(fallbackCapability.integrationStatus === 'adapter-ready', 'agent orchestration capability is marked adapter-ready')
+  const orchestrationAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
+    id: 'mission-agent-adapter',
+    title: '帮我处理一个很复杂的新任务',
+    goal: '帮我处理一个很复杂的新任务',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [fallbackCapability],
+  })
+  assert(orchestrationAdapterPlan.toolCall.toolName === 'agent.orchestration.plan', 'agent orchestration adapter prepares a planning tool call')
+  assert(orchestrationAdapterPlan.agentActions.at(-1).role === 'Planner', 'agent orchestration adapter records planner decomposition')
+  assert(!orchestrationAdapterPlan.permission, 'agent orchestration adapter does not request permission for internal planning')
+  const orchestrationAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-agent-adapter',
+    title: '帮我处理一个很复杂的新任务',
+    goal: '帮我处理一个很复杂的新任务',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [fallbackCapability],
+    toolCalls: [orchestrationAdapterPlan.toolCall],
+    artifacts: [orchestrationAdapterPlan.artifact],
+  })
+  assert(orchestrationAdapterRun.toolCall.toolName === 'agent.orchestration.execute', 'agent orchestration adapter records execution summary')
+  assert(orchestrationAdapterRun.artifact.kind === 'orchestration-summary', 'agent orchestration adapter creates orchestration artifact')
+  assert(orchestrationAdapterRun.reviewCheck.title === '多 Agent 编排复核', 'agent orchestration adapter creates reviewer check')
+  assert(orchestrationAdapterRun.reviewCheck.outcome === 'passed', 'agent orchestration reviewer check passes')
+  assert(orchestrationAdapterRun.agentActions.some(item => item.role === 'Researcher'), 'agent orchestration adapter records researcher handoff')
+  assert(orchestrationAdapterRun.agentActions.some(item => item.role === 'Builder'), 'agent orchestration adapter records builder handoff')
+  assert(orchestrationAdapterRun.agentActions.some(item => item.role === 'Operator'), 'agent orchestration adapter records operator handoff')
+  assert(orchestrationAdapterRun.agentActions.some(item => item.role === 'Reviewer'), 'agent orchestration adapter records reviewer handoff')
+  assert(orchestrationAdapterRun.toolStages.some(item => item.toolName === 'agent.role-handoff'), 'agent orchestration adapter records role handoff stage')
+  assert(orchestrationAdapterRun.toolStages.some(item => item.toolName === 'agent.external-effect' && item.status === 'skipped'), 'agent orchestration adapter records no hidden external effect')
   const desktopCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开微信')[0]
   assert(desktopCapability.id === 'desktop.app-control', 'capability registry routes desktop app tasks to desktop control')
   assert(desktopCapability.riskClasses.includes('Screen'), 'desktop capability declares screen risk')
@@ -500,16 +531,27 @@ try {
   assert(commandRunning.state === 'Running', 'continue command moves Planned -> Running')
   assert(commandRunning.plan.find(item => item.id === 'draft-plan')?.status === 'Done', 'continue command marks planning step done')
   assert(commandRunning.plan.find(item => item.id === 'execute-review')?.status === 'Active', 'continue command activates execution step')
-  assert(commandRunning.agentActions.at(-1).role === 'Planner', 'continue command records Planner action')
-  assert(commandRunning.agentActions.at(-1).planStepId === 'draft-plan', 'Planner action links to planning step')
-  assert(commandRunning.trace.at(-1).type === 'agent.action', 'Planner action is auditable in trace')
+  assert(commandRunning.agentActions.some(item => item.role === 'Planner' && item.planStepId === 'draft-plan'), 'continue command records Planner action')
+  assert(commandRunning.toolCalls.at(-1).toolName === 'agent.orchestration.plan', 'generic command records orchestration planning tool call')
+  assert(commandRunning.artifacts.at(-1).title === '多 Agent 编排方案', 'generic command creates orchestration plan artifact')
+  assert(commandRunning.agentActions.at(-1).title === '拆解通用任务', 'generic command records planner decomposition')
+  assert(commandRunning.trace.at(-1).type === 'agent.action', 'orchestration planner action is auditable in trace')
 
   const commandReviewing = runtime.applyCurrentMissionCommand({ text: 'continue', source: 'test-command' })
   assert(commandReviewing.state === 'Reviewing', 'continue command moves Running -> Reviewing')
   assert(commandReviewing.plan.find(item => item.id === 'execute-review')?.status === 'Reviewing', 'continue command marks execution step reviewing')
-  assert(commandReviewing.agentActions.at(-1).role === 'Builder', 'review continue records Builder action')
-  assert(commandReviewing.agentActions.at(-1).requiresReview === true, 'Builder action requires reviewer outcome')
-  assert(commandReviewing.trace.at(-1).reviewOutcome === 'required', 'Builder action trace records review requirement')
+  assert(commandReviewing.agentActions.some(item => item.role === 'Builder' && item.requiresReview === true), 'review continue records Builder action requiring review')
+  assert(commandReviewing.toolCalls.at(-1).toolName === 'agent.orchestration.execute', 'generic command records orchestration execution tool call')
+  assert(commandReviewing.artifacts.at(-1).kind === 'orchestration-summary', 'generic command creates orchestration summary artifact')
+  assert(commandReviewing.reviewChecks.at(-1).title === '多 Agent 编排复核', 'generic command creates orchestration reviewer check')
+  assert(commandReviewing.reviewChecks.at(-1).outcome === 'passed', 'generic command orchestration review passes')
+  assert(commandReviewing.agentActions.some(item => item.role === 'Researcher'), 'generic command records researcher handoff')
+  assert(commandReviewing.agentActions.some(item => item.role === 'Operator'), 'generic command records operator handoff')
+  assert(commandReviewing.agentActions.some(item => item.role === 'Reviewer'), 'generic command records reviewer handoff')
+  const orchestrationExecuteToolId = commandReviewing.toolCalls.at(-1).id
+  const orchestrationStages = commandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === orchestrationExecuteToolId)
+  assert(orchestrationStages.some(item => item.toolName === 'agent.role-handoff' && item.result === 'ok'), 'generic command records orchestration role handoff stage')
+  assert(orchestrationStages.some(item => item.toolName === 'agent.external-effect' && item.result === 'skipped'), 'generic command records skipped external-effect stage')
 
   let commandReviewGateRejected = false
   try {
@@ -756,7 +798,7 @@ try {
   assert(chineseCommandRunning.plan.find(item => item.id === 'execute-review')?.status === 'Active', 'Chinese continue command advances active plan step')
   const chineseCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(chineseCommandReviewing.state === 'Reviewing', 'Chinese continue command moves Running -> Reviewing')
-  assert(chineseCommandReviewing.agentActions.at(-1).role === 'Builder', 'Chinese review continue records Builder action')
+  assert(chineseCommandReviewing.agentActions.some(item => item.role === 'Builder' && item.requiresReview === true), 'Chinese review continue records Builder action')
   const chineseCommandReviewed = runtime.applyCurrentMissionCommand({ text: '审查通过', source: 'test-command' })
   assert(chineseCommandReviewed.reviewResult?.outcome === 'passed', 'Chinese review command records reviewer outcome')
   const chineseCommandCompleted = runtime.applyCurrentMissionCommand({ text: '完成', source: 'test-command' })

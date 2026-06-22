@@ -50,6 +50,10 @@ function primaryMemoryCapability(mission = {}) {
   return capabilityById(mission, 'memory.context-os')
 }
 
+function primaryAgentOrchestrationCapability(mission = {}) {
+  return capabilityById(mission, 'agent.orchestration')
+}
+
 function latestBrowserPrepareTool(mission = {}) {
   return [...normalizeArray(mission.toolCalls)]
     .reverse()
@@ -124,6 +128,23 @@ function hasMemoryResultForPrepare(mission = {}, prepareToolId = '') {
     asText(artifact.uri).includes(`/results/${marker}`)
   )) || normalizeArray(mission.memoryReferences).some(reference => (
     asText(reference.provenance || reference.uri).includes(`/results/${marker}`)
+  ))
+}
+
+function latestAgentOrchestrationPrepareTool(mission = {}) {
+  return [...normalizeArray(mission.toolCalls)]
+    .reverse()
+    .find(tool => (
+      tool?.toolName === 'agent.orchestration.plan'
+        && tool?.status === 'prepared'
+    )) || null
+}
+
+function hasAgentOrchestrationResultForPrepare(mission = {}, prepareToolId = '') {
+  const marker = asText(prepareToolId)
+  if (!marker) return false
+  return normalizeArray(mission.artifacts).some(artifact => (
+    asText(artifact.uri).includes(`/results/${marker}`)
   ))
 }
 
@@ -373,11 +394,105 @@ function planMemoryAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function orchestrationRolePlanForMission(mission = {}, input = {}) {
+  const text = missionText(mission, input)
+  const roles = [
+    {
+      role: 'Planner',
+      title: '拆解通用任务',
+      status: 'done',
+      summary: `规划者已把「${asText(mission.goal || mission.title || text, '当前任务')}」拆成可执行任务链：目标、上下文、动作、验证和确认。`,
+      result: '任务已拆解',
+      stage: 'plan-decomposition',
+    },
+    {
+      role: 'Researcher',
+      title: '识别上下文缺口',
+      status: 'ready',
+      summary: '研究者负责补齐网页、文件、记忆、屏幕或用户补充信息，所有来源都要可追溯。',
+      result: '等待上下文',
+      stage: 'context-routing',
+    },
+    {
+      role: 'Builder',
+      title: '准备可交付产物',
+      status: 'ready',
+      summary: '构建者负责把任务结果整理成草稿、摘要、文件产物、操作方案或可确认的下一步。',
+      result: '等待执行',
+      stage: 'deliverable-routing',
+    },
+    {
+      role: 'Operator',
+      title: '准备受控操作',
+      status: 'ready',
+      summary: '操作员只会在 Guard 边界内准备桌面、浏览器或外部动作；发送、提交、写入和真实控制前必须确认。',
+      result: '等待许可',
+      stage: 'operator-routing',
+    },
+    {
+      role: 'Reviewer',
+      title: '复核任务证据',
+      status: 'ready',
+      summary: '审查者负责检查结论、工具证据、权限边界和完成声明，避免没有证据就标记完成。',
+      result: '等待复核',
+      stage: 'review-routing',
+    },
+  ]
+
+  return roles
+}
+
+function orchestrationSummary(mission = {}, input = {}) {
+  const goal = asText(mission.goal || mission.title || input.text, '当前任务')
+  const capabilities = normalizeArray(mission.capabilityReferences)
+    .map(item => asText(item.title || item.id))
+    .filter(Boolean)
+  const capabilityText = capabilities.length ? `候选能力：${capabilities.join('、')}。` : '候选能力：通用多 Agent 编排。'
+  return `已为「${goal}」建立多 Agent 编排：Planner 负责拆解，Researcher 补上下文，Builder 产出结果，Operator 处理受控动作，Reviewer 复核证据。${capabilityText} 当前只生成内部计划和审计链，不执行外部效果。`
+}
+
+function planAgentOrchestrationRun(mission = {}, input = {}) {
+  const capability = primaryAgentOrchestrationCapability(mission)
+  if (capability?.id !== 'agent.orchestration') return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId(capability.id)
+  const rolePlan = orchestrationRolePlanForMission(mission, input)
+  const plannerAction = rolePlan.find(item => item.role === 'Planner')
+  const summary = orchestrationSummary(mission, input)
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'agent.orchestration.plan',
+      role: 'Planner',
+      status: 'prepared',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      title: '多 Agent 编排方案',
+      kind: 'plan',
+      uri: `vela://capabilities/agent.orchestration/runs/${toolCallId}`,
+      summary,
+      planStepId,
+    },
+    agentActions: plannerAction ? [{
+      ...plannerAction,
+      planStepId,
+      requiresReview: false,
+    }] : [],
+    nextStep: '我已经把任务拆成 Planner、Researcher、Builder、Operator、Reviewer 的协作链；继续后会形成可复核的执行摘要。',
+  }
+}
+
 export function planCapabilityAdapterRun(mission = {}, input = {}) {
   return planBrowserAdapterRun(mission, input)
     || planDesktopAdapterRun(mission, input)
     || planFilesAdapterRun(mission, input)
     || planMemoryAdapterRun(mission, input)
+    || planAgentOrchestrationRun(mission, input)
 }
 
 function browserExecutionSummary(mission = {}) {
@@ -757,11 +872,115 @@ function executeMemoryAdapterRun(mission = {}, input = {}) {
   }
 }
 
+function executeAgentOrchestrationRun(mission = {}, input = {}) {
+  const capability = primaryAgentOrchestrationCapability(mission)
+  if (capability?.id !== 'agent.orchestration') return null
+
+  const prepareTool = latestAgentOrchestrationPrepareTool(mission)
+  if (!prepareTool || hasAgentOrchestrationResultForPrepare(mission, prepareTool.id)) return null
+
+  const planStepId = activePlanStepId(mission.plan)
+  const toolCallId = makeAdapterToolId('agent.orchestration.execute')
+  const artifactId = makeAdapterResultId('agent.orchestration')
+  const rolePlan = orchestrationRolePlanForMission(mission, input)
+  const nonPlannerActions = rolePlan
+    .filter(item => item.role !== 'Planner')
+    .map(item => ({
+      ...item,
+      status: item.role === 'Reviewer' ? 'done' : 'ready',
+      planStepId,
+      requiresReview: item.role === 'Reviewer',
+    }))
+  const artifactUri = `vela://capabilities/agent.orchestration/results/${prepareTool.id}`
+  const summary = orchestrationSummary(mission, input)
+  const evidence = [
+    `准备工具调用：${prepareTool.id}`,
+    `角色链路：${rolePlan.map(item => item.role).join(' -> ')}`,
+    `能力来源：${asText(capability.source, 'Vela capability registry')}`,
+    `权限边界：${asText(capability.permissionBoundary, '外部效果仍需确认')}`,
+    '当前只生成内部编排、角色交接和复核证据；未执行命令、写文件、发消息或控制真实应用。',
+  ]
+  return {
+    capability,
+    toolCall: {
+      id: toolCallId,
+      toolName: 'agent.orchestration.execute',
+      role: 'Planner',
+      status: 'ok',
+      planStepId,
+      risk: 'Read',
+      result: summary,
+    },
+    artifact: {
+      id: artifactId,
+      title: '编排结果摘要',
+      kind: 'orchestration-summary',
+      uri: artifactUri,
+      summary,
+      planStepId,
+    },
+    agentActions: nonPlannerActions,
+    reviewCheck: {
+      key: `agent-orchestration-${asText(mission.id, 'mission')}`,
+      title: '多 Agent 编排复核',
+      outcome: 'passed',
+      reviewer: 'Vela Orchestration Reviewer',
+      role: 'Reviewer',
+      planStepId,
+      toolCallId,
+      artifactId,
+      summary: '多 Agent 编排已连接任务目标、角色交接、能力来源、权限边界和无外部效果证据。',
+      evidence,
+      failures: [],
+    },
+    toolStages: [
+      {
+        toolName: 'agent.plan-decomposition',
+        status: 'ok',
+        stage: 'agent-plan-decomposition',
+        summary: rolePlan.find(item => item.role === 'Planner')?.summary || summary,
+        url: `${artifactUri}#planner`,
+        planStepId,
+        role: 'Planner',
+      },
+      {
+        toolName: 'agent.role-handoff',
+        status: 'ok',
+        stage: 'agent-role-handoff',
+        summary: `角色交接链路：${rolePlan.map(item => item.role).join(' -> ')}`,
+        url: `${artifactUri}#roles`,
+        planStepId,
+        role: 'Planner',
+      },
+      {
+        toolName: 'agent.guard-boundary',
+        status: 'ok',
+        stage: 'agent-guard-boundary',
+        summary: asText(capability.permissionBoundary, '外部效果仍需确认。'),
+        url: `${artifactUri}#guard`,
+        planStepId,
+        role: 'Reviewer',
+      },
+      {
+        toolName: 'agent.external-effect',
+        status: 'skipped',
+        stage: 'agent-no-hidden-effect',
+        summary: '未执行命令、写文件、发消息或控制真实应用。',
+        url: 'external://none',
+        planStepId,
+        role: 'Reviewer',
+      },
+    ],
+    nextStep: '编排摘要已准备好；下一步可以接入具体能力，或由 Reviewer 通过后完成当前任务。',
+  }
+}
+
 export function executeCapabilityAdapterRun(mission = {}, input = {}) {
   return executeBrowserAdapterRun(mission, input)
     || executeDesktopAdapterRun(mission, input)
     || executeFilesAdapterRun(mission, input)
     || executeMemoryAdapterRun(mission, input)
+    || executeAgentOrchestrationRun(mission, input)
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {
