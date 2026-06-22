@@ -61,7 +61,7 @@ export const OPEN_CAPABILITY_REGISTRY = [
       },
     ],
     integrationStatus: 'adapter-ready',
-    evaluation: 'test:vela-mission covers MCP candidate routing, risk declaration, trace linkage, review evidence, and skipped external tool execution.',
+    evaluation: 'test:vela-mission covers MCP candidate routing, GitHub read-only execution, risk declaration, trace linkage, review evidence, and skipped write actions.',
   },
   {
     id: 'agent.orchestration',

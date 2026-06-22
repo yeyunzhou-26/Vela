@@ -82,6 +82,14 @@ function shouldExecuteBrowserAdapter(mission = {}) {
   return !!prepareTool && !hasBrowserResultForPrepare(mission, prepareTool.id)
 }
 
+function shouldExecuteMcpBridgeAdapter(mission = {}) {
+  const capability = primaryMcpBridgeCapability(mission)
+  if (capability?.id !== 'tool.mcp-bridge') return false
+  if (!mcpToolCandidatesForMission(mission).some(item => item.id === 'github')) return false
+  const prepareTool = latestMcpBridgePrepareTool(mission)
+  return !!prepareTool && !hasMcpBridgeResultForPrepare(mission, prepareTool.id)
+}
+
 function latestDesktopPrepareTool(mission = {}) {
   return [...normalizeArray(mission.toolCalls)]
     .reverse()
@@ -701,6 +709,44 @@ function normalizeBrowserStage(stage = {}, index = 0) {
   }
 }
 
+function normalizeMcpGithubReadResult(value) {
+  if (!value || typeof value !== 'object') return null
+  if (value.kind !== 'mcp-github-read-result') return null
+  return {
+    ...value,
+    ok: value.ok !== false,
+    summary: asText(value.summary),
+    evidence: normalizeArray(value.evidence).map(item => asText(item)).filter(Boolean),
+    sourceTools: normalizeArray(value.sourceTools).map(item => asText(item)).filter(Boolean),
+    failures: normalizeArray(value.failures).map(item => (
+      typeof item === 'string'
+        ? { reason: asText(item) }
+        : {
+            ...item,
+            tool: asText(item?.tool),
+            url: asText(item?.url),
+            reason: asText(item?.reason || item?.error || item?.message),
+          }
+    )),
+    stages: normalizeArray(value.stages).map(normalizeMcpToolStage),
+    repo: value.repo || null,
+    issues: normalizeArray(value.issues),
+  }
+}
+
+function normalizeMcpToolStage(stage = {}, index = 0) {
+  const tool = asText(stage.tool || stage.toolName, 'mcp')
+  const status = asText(stage.status || stage.result, stage.ok === false ? 'failed' : 'ok')
+  return {
+    id: asText(stage.id, `mcp-stage-${index + 1}`),
+    tool,
+    status,
+    url: asText(stage.url || stage.href, ''),
+    summary: asText(stage.summary || stage.detail || stage.reason || stage.error, ''),
+    reason: asText(stage.reason || stage.error || stage.message, ''),
+  }
+}
+
 function executeBrowserAdapterRun(mission = {}, input = {}) {
   const capability = primaryBrowserCapability(mission)
   if (capability?.id !== 'browser.web-agent') return null
@@ -1057,29 +1103,58 @@ function executeMcpBridgeRun(mission = {}, input = {}) {
   const artifactUri = `vela://capabilities/tool.mcp-bridge/results/${prepareTool.id}`
   const candidates = mcpToolCandidatesForMission(mission, input)
   const risks = mcpRiskList(candidates)
-  const summary = mcpBridgeSummary(mission, input)
-  const evidence = [
-    `准备工具调用：${prepareTool.id}`,
-    `候选工具：${candidates.map(item => `${item.server}/${item.toolNames.join('+')}`).join('；')}`,
-    `风险类别：${risks.join('、') || 'Read'}`,
-    `能力来源：${asText(capability.source, 'modelcontextprotocol/servers')}`,
-    '当前只生成路由摘要；未调用真实 MCP 工具、未访问外部网络、未写入文件或仓库。',
-  ]
+  const githubReadResult = normalizeMcpGithubReadResult(input.capabilityAdapterResult)
+  const hasLiveResult = !!githubReadResult
+  const ok = hasLiveResult ? githubReadResult.ok : true
+  const summary = githubReadResult?.summary || mcpBridgeSummary(mission, input)
+  const evidence = githubReadResult?.evidence?.length
+    ? [
+        `准备工具调用：${prepareTool.id}`,
+        ...githubReadResult.evidence,
+        `能力来源：${asText(capability.source, 'modelcontextprotocol/servers')}`,
+      ]
+    : [
+        `准备工具调用：${prepareTool.id}`,
+        `候选工具：${candidates.map(item => `${item.server}/${item.toolNames.join('+')}`).join('；')}`,
+        `风险类别：${risks.join('、') || 'Read'}`,
+        `能力来源：${asText(capability.source, 'modelcontextprotocol/servers')}`,
+        '当前只生成路由摘要；未调用真实 MCP 工具、未访问外部网络、未写入文件或仓库。',
+      ]
+  const sourceTools = githubReadResult?.sourceTools?.length
+    ? `；底层工具：${githubReadResult.sourceTools.join(' + ')}`
+    : ''
+  const failureReasons = normalizeArray(githubReadResult?.failures)
+    .map(item => asText(item.reason || item.error || item.summary || item.url))
+    .filter(Boolean)
+  const resultPrefix = hasLiveResult
+    ? (ok ? 'GitHub 只读执行完成' : 'GitHub 只读执行未完成')
+    : 'MCP 工具路由摘要完成'
+  const liveStages = normalizeArray(githubReadResult?.stages).map(stage => ({
+    toolName: stage.tool,
+    status: stage.status,
+    stage: stage.id,
+    summary: stage.summary || stage.reason,
+    url: stage.url || artifactUri,
+    planStepId,
+    role: stage.tool === 'github.target.parse' ? 'Builder' : 'Operator',
+  }))
   return {
     capability,
     toolCall: {
       id: toolCallId,
       toolName: 'tool.mcp-bridge.route',
       role: 'Builder',
-      status: 'ok',
+      status: ok ? 'ok' : 'failed',
       planStepId,
       risk: 'Read',
-      result: summary,
+      result: `${resultPrefix}${sourceTools}。${summary}`,
     },
     artifact: {
       id: artifactId,
-      title: 'MCP 工具路由摘要',
-      kind: 'mcp-route-summary',
+      title: hasLiveResult
+        ? (ok ? 'GitHub 只读结果摘要' : 'GitHub 只读执行失败')
+        : 'MCP 工具路由摘要',
+      kind: hasLiveResult ? 'mcp-github-read-summary' : 'mcp-route-summary',
       uri: artifactUri,
       summary,
       planStepId,
@@ -1096,26 +1171,30 @@ function executeMcpBridgeRun(mission = {}, input = {}) {
       },
       {
         role: 'Reviewer',
-        title: '复核 MCP 工具边界',
+        title: hasLiveResult ? '复核 GitHub 只读边界' : '复核 MCP 工具边界',
         status: 'done',
         planStepId,
-        summary: '审查者确认本次只生成工具路由和权限边界，没有真实执行工具。',
-        result: '复核通过',
+        summary: hasLiveResult
+          ? (ok ? '审查者确认 GitHub 读取结果有来源、有阶段记录，且没有写入动作。' : '审查者发现 GitHub 只读执行失败，已保留失败证据。')
+          : '审查者确认本次只生成工具路由和权限边界，没有真实执行工具。',
+        result: ok ? '复核通过' : '复核阻塞',
         requiresReview: true,
       },
     ],
     reviewCheck: {
       key: `mcp-bridge-${asText(mission.id, 'mission')}`,
-      title: 'MCP 工具桥复核',
-      outcome: 'passed',
+      title: hasLiveResult ? 'GitHub 只读复核' : 'MCP 工具桥复核',
+      outcome: ok ? 'passed' : 'failed',
       reviewer: 'Vela Tool Bridge Reviewer',
       role: 'Reviewer',
       planStepId,
       toolCallId,
       artifactId,
-      summary: 'MCP 工具桥已记录候选工具、风险类别、来源和无真实执行证据。',
+      summary: hasLiveResult
+        ? (ok ? 'GitHub 只读结果已经连接到工具调用、产物、阶段和只读边界，可进入用户确认。' : 'GitHub 只读结果没有拿到可用数据，已保留失败证据并等待调整。')
+        : 'MCP 工具桥已记录候选工具、风险类别、来源和无真实执行证据。',
       evidence,
-      failures: [],
+      failures: failureReasons,
     },
     toolStages: [
       {
@@ -1136,17 +1215,22 @@ function executeMcpBridgeRun(mission = {}, input = {}) {
         planStepId,
         role: 'Builder',
       })),
+      ...liveStages,
       {
-        toolName: 'mcp.external-tool-execution',
+        toolName: hasLiveResult ? 'mcp.write-action' : 'mcp.external-tool-execution',
         status: 'skipped',
-        stage: 'mcp-no-execution',
-        summary: '未调用真实 MCP 工具；写入、命令、网络和凭证动作仍需 Guard。',
-        url: 'mcp://execution-skipped',
+        stage: hasLiveResult ? 'mcp-no-write-action' : 'mcp-no-execution',
+        summary: hasLiveResult
+          ? '本次只允许 GitHub 只读请求；评论、改 issue、合并 PR、推送代码和凭证访问仍需 Guard。'
+          : '未调用真实 MCP 工具；写入、命令、网络和凭证动作仍需 Guard。',
+        url: hasLiveResult ? 'mcp://write-action-skipped' : 'mcp://execution-skipped',
         planStepId,
         role: 'Reviewer',
       },
     ],
-    nextStep: 'MCP 工具路由摘要已准备好；接入真实工具执行前，Vela 会按风险走 Guard。',
+    nextStep: hasLiveResult
+      ? (ok ? 'GitHub 只读结果已准备好；你可以查看摘要并决定下一步。' : 'GitHub 只读执行失败；请补充正确仓库或稍后重试。')
+      : 'MCP 工具路由摘要已准备好；接入真实工具执行前，Vela 会按风险走 Guard。',
   }
 }
 
@@ -1270,11 +1354,18 @@ export function executeCapabilityAdapterRun(mission = {}, input = {}) {
 }
 
 export function shouldPrepareCapabilityAdapterResult(mission = {}) {
-  return shouldExecuteBrowserAdapter(mission)
+  return shouldExecuteBrowserAdapter(mission) || shouldExecuteMcpBridgeAdapter(mission)
 }
 
 export async function prepareCapabilityAdapterResult(mission = {}, input = {}, deps = {}) {
   if (!shouldPrepareCapabilityAdapterResult(mission)) return null
-  const { readBrowserMission } = await import('./web-reader.js')
-  return readBrowserMission({ mission, input, ...deps })
+  if (shouldExecuteBrowserAdapter(mission)) {
+    const { readBrowserMission } = await import('./web-reader.js')
+    return readBrowserMission({ mission, input, ...deps })
+  }
+  if (shouldExecuteMcpBridgeAdapter(mission)) {
+    const { readGitHubMission } = await import('./github-reader.js')
+    return readGitHubMission({ mission, input, ...deps })
+  }
+  return null
 }

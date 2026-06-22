@@ -20,6 +20,7 @@ try {
   const runtime = await import('./vela/mission-runtime.js')
   const capabilityAdapters = await import('./vela/capability-adapters.js')
   const capabilityRegistry = await import('./vela/capability-registry.js')
+  const githubReader = await import('./vela/github-reader.js')
 
   const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
   assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
@@ -58,6 +59,52 @@ try {
   assert(mcpCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub tool tasks to MCP bridge')
   assert(mcpCapability.riskClasses.includes('Network'), 'MCP bridge capability declares network risk')
   assert(mcpCapability.integrationStatus === 'adapter-ready', 'MCP bridge capability is marked adapter-ready')
+  const githubTarget = githubReader.extractGitHubTarget('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/issues')
+  assert(githubTarget.owner === 'yeyunzhou-26' && githubTarget.repo === 'Vela', 'GitHub reader extracts repository target from URL')
+  let githubReaderSawHeaders = false
+  const githubReadResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 github 工具查看 yeyunzhou-26/Vela issue',
+      goal: '用 github 工具查看 yeyunzhou-26/Vela issue',
+      inputs: [],
+    },
+    fetchJson: async ({ url, headers }) => {
+      githubReaderSawHeaders = headers.Accept === 'application/vnd.github+json'
+        && !!headers['X-GitHub-Api-Version']
+      if (url.includes('/issues?')) {
+        return [
+          {
+            number: 7,
+            title: 'Polish Vela mission review',
+            state: 'open',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/issues/7',
+            user: { login: 'yeyunzhou-26' },
+            labels: [{ name: 'vela' }],
+            updated_at: '2026-06-21T12:00:00Z',
+          },
+        ]
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-21T12:00:00Z',
+      }
+    },
+  })
+  assert(githubReadResult.ok === true, 'GitHub reader completes read-only repo and issue lookup')
+  assert(githubReaderSawHeaders === true, 'GitHub reader sends recommended API headers')
+  assert(githubReadResult.sourceTools.includes('github.repo.get'), 'GitHub reader records repo endpoint')
+  assert(githubReadResult.sourceTools.includes('github.issues.list'), 'GitHub reader records issues endpoint')
+  assert(githubReadResult.summary.includes('Polish Vela mission review'), 'GitHub reader summarizes issue titles')
+  assert(githubReadResult.evidence.some(item => item.includes('未写评论')), 'GitHub reader records read-only boundary evidence')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -96,6 +143,25 @@ try {
   assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.registry.resolve'), 'MCP bridge adapter records registry resolution stage')
   assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.candidate.github'), 'MCP bridge adapter records GitHub candidate stage')
   assert(mcpAdapterRun.toolStages.some(item => item.toolName === 'mcp.external-tool-execution' && item.status === 'skipped'), 'MCP bridge adapter records skipped external tool execution')
+  const mcpAdapterLiveRun = capabilityAdapters.executeCapabilityAdapterRun({
+    id: 'mission-mcp-live-adapter',
+    title: '用 github 工具查看 yeyunzhou-26/Vela issue',
+    goal: '用 github 工具查看 yeyunzhou-26/Vela issue',
+    plan: [{ id: 'execute-review', label: '产出结果并复核', status: 'Active' }],
+    capabilityReferences: [mcpCapability],
+    toolCalls: [mcpAdapterPlan.toolCall],
+    artifacts: [mcpAdapterPlan.artifact],
+  }, {
+    capabilityAdapterResult: githubReadResult,
+  })
+  assert(mcpAdapterLiveRun.toolCall.status === 'ok', 'MCP bridge live GitHub run records successful tool call')
+  assert(mcpAdapterLiveRun.toolCall.result.includes('github.repo.get + github.issues.list'), 'MCP bridge live GitHub run records source tools')
+  assert(mcpAdapterLiveRun.artifact.kind === 'mcp-github-read-summary', 'MCP bridge live GitHub run creates GitHub read artifact')
+  assert(mcpAdapterLiveRun.reviewCheck.title === 'GitHub 只读复核', 'MCP bridge live GitHub run creates GitHub review check')
+  assert(mcpAdapterLiveRun.reviewCheck.evidence.some(item => item.includes('Vela/issues/7')), 'MCP bridge live GitHub run keeps issue evidence')
+  assert(mcpAdapterLiveRun.toolStages.some(item => item.toolName === 'github.repo.get' && item.status === 'ok'), 'MCP bridge live GitHub run records repo stage')
+  assert(mcpAdapterLiveRun.toolStages.some(item => item.toolName === 'github.issues.list' && item.status === 'ok'), 'MCP bridge live GitHub run records issues stage')
+  assert(mcpAdapterLiveRun.toolStages.some(item => item.toolName === 'mcp.write-action' && item.status === 'skipped'), 'MCP bridge live GitHub run records skipped write action')
   const fallbackCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我处理一个很复杂的新任务')[0]
   assert(fallbackCapability.id === 'agent.orchestration', 'capability registry falls back to agent orchestration')
   assert(fallbackCapability.integrationStatus === 'adapter-ready', 'agent orchestration capability is marked adapter-ready')
@@ -628,6 +694,87 @@ try {
   const mcpStages = mcpCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === mcpRouteToolId)
   assert(mcpStages.some(item => item.toolName === 'mcp.candidate.github' && item.result === 'ok'), 'MCP command records GitHub candidate stage')
   assert(mcpStages.some(item => item.toolName === 'mcp.external-tool-execution' && item.result === 'skipped'), 'MCP command records skipped MCP execution')
+
+  const githubCommandMission = runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 yeyunzhou-26/Vela issue',
+    source: 'test-command',
+  })
+  assert(githubCommandMission.capabilityReferences[0]?.id === 'tool.mcp-bridge', 'GitHub command keeps MCP bridge as primary capability')
+  const githubCommandRunning = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(githubCommandRunning.state === 'Running', 'GitHub command enters running state')
+  const githubCommandReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async ({ url }) => {
+        if (url.includes('/issues?')) {
+          return [
+            {
+              number: 9,
+              title: 'Ship GitHub read-only mission execution',
+              state: 'open',
+              html_url: 'https://github.com/yeyunzhou-26/Vela/issues/9',
+              user: { login: 'yeyunzhou-26' },
+              labels: [{ name: 'runtime' }],
+              updated_at: '2026-06-22T08:00:00Z',
+            },
+          ]
+        }
+        return {
+          full_name: 'yeyunzhou-26/Vela',
+          name: 'Vela',
+          owner: { login: 'yeyunzhou-26' },
+          html_url: 'https://github.com/yeyunzhou-26/Vela',
+          description: 'Mission-first AI Operating Desk',
+          default_branch: 'main',
+          stargazers_count: 0,
+          forks_count: 0,
+          open_issues_count: 1,
+          visibility: 'public',
+          updated_at: '2026-06-22T08:00:00Z',
+        }
+      },
+    },
+  })
+  assert(githubCommandReviewing.state === 'Reviewing', 'async GitHub command moves to reviewing')
+  assert(githubCommandReviewing.toolCalls.at(-1).status === 'ok', 'async GitHub command records successful tool call')
+  assert(githubCommandReviewing.toolCalls.at(-1).result.includes('github.repo.get + github.issues.list'), 'async GitHub command records GitHub source tools')
+  assert(githubCommandReviewing.artifacts.at(-1).kind === 'mcp-github-read-summary', 'async GitHub command creates GitHub artifact')
+  assert(githubCommandReviewing.artifacts.at(-1).summary.includes('Ship GitHub read-only mission execution'), 'async GitHub command summarizes issue list')
+  assert(githubCommandReviewing.reviewChecks.at(-1).title === 'GitHub 只读复核', 'async GitHub command creates GitHub review check')
+  assert(githubCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'async GitHub command review passes')
+  const githubReadToolId = githubCommandReviewing.toolCalls.at(-1).id
+  const githubStages = githubCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubReadToolId)
+  assert(githubStages.some(item => item.toolName === 'github.repo.get' && item.result === 'ok'), 'async GitHub command records repo read stage')
+  assert(githubStages.some(item => item.toolName === 'github.issues.list' && item.result === 'ok'), 'async GitHub command records issue read stage')
+  assert(githubStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub command records skipped write-action stage')
+
+  runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 missing-owner/missing-repo issue',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const failedGithubReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async () => ({
+        ok: false,
+        status: 404,
+        message: 'Not Found',
+      }),
+    },
+  })
+  assert(failedGithubReviewing.state === 'Reviewing', 'failed GitHub command still reaches reviewing with evidence')
+  assert(failedGithubReviewing.toolCalls.at(-1).status === 'failed', 'failed GitHub command records failed tool call')
+  assert(failedGithubReviewing.reviewChecks.at(-1).outcome === 'failed', 'failed GitHub command records failed review check')
+  assert(failedGithubReviewing.reviewChecks.at(-1).failures.some(item => item.includes('Not Found')), 'failed GitHub command records API failure reason')
+  assert(failedGithubReviewing.recoveryActions.some(item => item.source === 'review_blocked' && item.status === 'open'), 'failed GitHub command opens review recovery action')
+  const failedGithubToolId = failedGithubReviewing.toolCalls.at(-1).id
+  const failedGithubStages = failedGithubReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === failedGithubToolId)
+  assert(failedGithubStages.some(item => item.toolName === 'github.repo.get' && item.result === 'failed'), 'failed GitHub command records failed repo stage')
+  assert(failedGithubStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'failed GitHub command still records skipped write-action stage')
+
   const mcpReportMission = runtime.applyCurrentMissionCommand({
     text: '用 github 工具查看 issue 并生成报告',
     source: 'test-command',

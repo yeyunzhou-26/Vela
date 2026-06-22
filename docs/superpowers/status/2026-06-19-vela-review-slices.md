@@ -14,6 +14,7 @@ Files:
 - `src/vela/mission-runtime.js`
 - `src/vela/capability-registry.js`
 - `src/vela/capability-adapters.js`
+- `src/vela/github-reader.js`
 - `src/api.js`
 - `src/test-vela-mission.js`
 
