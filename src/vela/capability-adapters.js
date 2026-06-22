@@ -741,6 +741,10 @@ function normalizeMcpGithubReadResult(value) {
     contentItems: normalizeArray(value.contentItems),
     contentTotalItems: Number(value.contentTotalItems || 0),
     contentTruncated: value.contentTruncated === true,
+    repoSearchRequest: value.repoSearchRequest || null,
+    repoSearchResults: normalizeArray(value.repoSearchResults),
+    repoSearchTotalCount: Number(value.repoSearchTotalCount || 0),
+    repoSearchIncompleteResults: value.repoSearchIncompleteResults === true,
   }
 }
 

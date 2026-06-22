@@ -16,6 +16,12 @@ function hasAny(value, triggers = []) {
   return triggers.some(trigger => text.includes(normalizeForMatch(trigger)))
 }
 
+function hasGitHubToolIntent(value) {
+  const text = normalizeForMatch(value)
+  if (!/(?:github|git\b)/i.test(text)) return false
+  return /(?:mcp|tool|工具|issue|issues|议题|pr\b|pull request|拉取请求|repo|repository|仓库|开源|项目|搜索|查找|寻找|推荐|候选|对比|调研|readme|源码|代码)/i.test(text)
+}
+
 export const OPEN_CAPABILITY_REGISTRY = [
   {
     id: 'browser.web-agent',
@@ -203,7 +209,8 @@ export function findOpenCapabilitiesForText(value, options = {}) {
     .map(capability => {
       const triggerHits = capability.triggers.filter(trigger => hasAny(text, [trigger]))
       const urlHit = capability.id === 'browser.web-agent' && WEB_URL_RE.test(text)
-      const score = triggerHits.length + (urlHit ? 1 : 0)
+      const githubToolBoost = capability.id === 'tool.mcp-bridge' && hasGitHubToolIntent(text) ? 3 : 0
+      const score = triggerHits.length + (urlHit ? 1 : 0) + githubToolBoost
       return { capability, triggerHits, score }
     })
     .filter(item => item.score > 0)

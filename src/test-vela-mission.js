@@ -59,6 +59,8 @@ try {
   assert(mcpCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub tool tasks to MCP bridge')
   assert(mcpCapability.riskClasses.includes('Network'), 'MCP bridge capability declares network risk')
   assert(mcpCapability.integrationStatus === 'adapter-ready', 'MCP bridge capability is marked adapter-ready')
+  const githubSearchCapability = capabilityRegistry.findOpenCapabilitiesForText('用 GitHub 搜索 browser automation agent 开源项目')[0]
+  assert(githubSearchCapability.id === 'tool.mcp-bridge', 'capability registry routes GitHub repository search to MCP bridge')
   const githubTarget = githubReader.extractGitHubTarget('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/issues')
   assert(githubTarget.owner === 'yeyunzhou-26' && githubTarget.repo === 'Vela', 'GitHub reader extracts repository target from URL')
   let githubReaderSawHeaders = false
@@ -387,6 +389,62 @@ try {
   assert(githubReadmeReadResult.ok === true, 'GitHub reader completes README lookup')
   assert(githubReadmeReadResult.sourceTools.includes('github.readme.get'), 'GitHub reader records README endpoint')
   assert(githubReadmeReadResult.contentDetail.contentExcerpt.includes('Mission-first AI Operating Desk'), 'GitHub reader decodes README excerpt')
+  const githubSearchRequest = githubReader.extractGitHubRepoSearchRequest('用 GitHub 搜索 browser automation agent 开源项目')
+  assert(githubSearchRequest.query === 'browser automation agent', 'GitHub reader extracts repository search query')
+  assert(githubReader.extractGitHubTarget('用 GitHub 搜索 browser automation agent 开源项目') === null, 'GitHub reader does not require owner/repo for repository search')
+  const githubRepoSearchResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 搜索 browser automation agent 开源项目',
+      goal: '用 GitHub 搜索 browser automation agent 开源项目',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      assert(url.includes('/search/repositories'), 'GitHub reader calls repository search endpoint')
+      return {
+        total_count: 42,
+        incomplete_results: false,
+        items: [
+          {
+            full_name: 'browser-use/browser-use',
+            name: 'browser-use',
+            owner: { login: 'browser-use' },
+            html_url: 'https://github.com/browser-use/browser-use',
+            description: 'Make websites accessible for AI agents',
+            language: 'Python',
+            topics: ['browser-automation', 'ai-agent'],
+            license: { spdx_id: 'MIT' },
+            stargazers_count: 50000,
+            forks_count: 5000,
+            open_issues_count: 123,
+            default_branch: 'main',
+            updated_at: '2026-06-22T13:00:00Z',
+            pushed_at: '2026-06-22T12:50:00Z',
+          },
+          {
+            full_name: 'microsoft/playwright-mcp',
+            name: 'playwright-mcp',
+            owner: { login: 'microsoft' },
+            html_url: 'https://github.com/microsoft/playwright-mcp',
+            description: 'Browser automation through a model context server',
+            language: 'TypeScript',
+            topics: ['playwright', 'mcp'],
+            license: { spdx_id: 'Apache-2.0' },
+            stargazers_count: 12000,
+            forks_count: 800,
+            open_issues_count: 45,
+            default_branch: 'main',
+            updated_at: '2026-06-22T12:30:00Z',
+          },
+        ],
+      }
+    },
+  })
+  assert(githubRepoSearchResult.ok === true, 'GitHub reader completes repository search')
+  assert(githubRepoSearchResult.mode === 'github-repo-search', 'GitHub reader records repository search mode')
+  assert(githubRepoSearchResult.sourceTools.includes('github.search.repositories'), 'GitHub reader records repository search endpoint')
+  assert(githubRepoSearchResult.repoSearchResults.at(0).fullName === 'browser-use/browser-use', 'GitHub reader keeps repository search candidates')
+  assert(githubRepoSearchResult.summary.includes('browser-use/browser-use'), 'GitHub reader summarizes repository candidates')
+  assert(githubRepoSearchResult.evidence.some(item => item.includes('未 star')), 'GitHub reader records repository search read-only boundary')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -1243,6 +1301,71 @@ try {
   const githubContentStages = githubContentReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubContentToolId)
   assert(githubContentStages.some(item => item.toolName === 'github.contents.get' && item.result === 'ok'), 'async GitHub content command records contents read stage')
   assert(githubContentStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub content command records skipped write-action stage')
+
+  runtime.applyCurrentMissionCommand({
+    text: '用 GitHub 搜索 browser automation agent 开源项目',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const githubSearchReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async ({ url }) => {
+        if (url.includes('/search/repositories')) {
+          return {
+            total_count: 2,
+            incomplete_results: false,
+            items: [
+              {
+                full_name: 'browser-use/browser-use',
+                name: 'browser-use',
+                owner: { login: 'browser-use' },
+                html_url: 'https://github.com/browser-use/browser-use',
+                description: 'Make websites accessible for AI agents',
+                language: 'Python',
+                topics: ['browser-automation', 'ai-agent'],
+                license: { spdx_id: 'MIT' },
+                stargazers_count: 50000,
+                forks_count: 5000,
+                open_issues_count: 123,
+                default_branch: 'main',
+                updated_at: '2026-06-22T13:00:00Z',
+              },
+              {
+                full_name: 'microsoft/playwright-mcp',
+                name: 'playwright-mcp',
+                owner: { login: 'microsoft' },
+                html_url: 'https://github.com/microsoft/playwright-mcp',
+                description: 'Browser automation through a model context server',
+                language: 'TypeScript',
+                topics: ['playwright', 'mcp'],
+                license: { spdx_id: 'Apache-2.0' },
+                stargazers_count: 12000,
+                forks_count: 800,
+                open_issues_count: 45,
+                default_branch: 'main',
+                updated_at: '2026-06-22T12:30:00Z',
+              },
+            ],
+          }
+        }
+        return {
+          ok: false,
+          status: 404,
+          message: 'Unexpected GitHub endpoint in repository search test',
+        }
+      },
+    },
+  })
+  assert(githubSearchReviewing.state === 'Reviewing', 'async GitHub repository search command moves to reviewing')
+  assert(githubSearchReviewing.toolCalls.at(-1).result.includes('github.search.repositories'), 'async GitHub repository search command records search source tool')
+  assert(githubSearchReviewing.artifacts.at(-1).summary.includes('browser-use/browser-use'), 'async GitHub repository search command summarizes candidates')
+  assert(githubSearchReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('playwright-mcp')), 'async GitHub repository search command keeps candidate evidence')
+  const githubSearchToolId = githubSearchReviewing.toolCalls.at(-1).id
+  const githubSearchStages = githubSearchReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubSearchToolId)
+  assert(githubSearchStages.some(item => item.toolName === 'github.search.repositories' && item.result === 'ok'), 'async GitHub repository search command records search stage')
+  assert(githubSearchStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub repository search command records skipped write-action stage')
 
   runtime.applyCurrentMissionCommand({
     text: '用 github 工具查看 missing-owner/missing-repo issue',

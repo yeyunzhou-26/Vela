@@ -4,6 +4,7 @@ const DEFAULT_COMMENT_LIMIT = 5
 const DEFAULT_PR_FILE_LIMIT = 12
 const DEFAULT_PR_REVIEW_LIMIT = 5
 const DEFAULT_CONTENT_ENTRY_LIMIT = 20
+const DEFAULT_REPO_SEARCH_LIMIT = 5
 const BODY_EXCERPT_LENGTH = 360
 const CONTENT_EXCERPT_LENGTH = 1600
 
@@ -104,6 +105,11 @@ function hasPullIntent(text = '') {
 
 function hasIssueIntent(text = '') {
   return /(?:\/issues\/|\bissues?\b|议题|问题|bug)/i.test(text)
+}
+
+function hasRepoSearchIntent(text = '') {
+  return /(?:github|开源|open source|repo|repository|仓库|项目|project|library|framework|工具|tool)/i.test(text)
+    && /(?:搜索|查找|寻找|找|推荐|候选|对比|调研|search|find|discover|recommend|compare|research)/i.test(text)
 }
 
 export function extractGitHubTarget(value = '') {
@@ -236,6 +242,33 @@ export function extractGitHubContentRequest(value = '') {
   }
 
   return null
+}
+
+function cleanRepoSearchQuery(value = '') {
+  return asText(value)
+    .replace(/(?:https?:\/\/)?(?:www\.)?github\.com\/search\?[^ \n\t，。；]+/ig, ' ')
+    .replace(/(?:用|使用|帮我|帮|请|给我|通过)?\s*(?:github|GitHub)\s*(?:工具|tool)?/ig, ' ')
+    .replace(/(?:搜索|查找|寻找|找一下|找|推荐|候选|对比|调研|研究|search|find|discover|recommend|compare|research)/ig, ' ')
+    .replace(/(?:开源项目|开源仓库|项目|仓库|repo(?:sitories)?|repository|repositories|open source projects?|projects?)/ig, ' ')
+    .replace(/(?:可以|能够|能|适合|相关|类似|优秀|好的|好用的|强大|参考|借鉴|吸取|众家之长)/ig, ' ')
+    .replace(/[“”"'`]/g, ' ')
+    .replace(/[，。；、,;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function extractGitHubRepoSearchRequest(value = '') {
+  const text = asText(value)
+  if (!text || !hasRepoSearchIntent(text) || extractGitHubTarget(text)) return null
+  const query = cleanRepoSearchQuery(text)
+  if (!query) return null
+  const sort = /(?:recent|recently|updated|活跃|最近|更新|维护)/i.test(text) ? 'updated' : 'stars'
+  return {
+    query,
+    sort,
+    order: 'desc',
+    source: 'repo-search-intent',
+  }
 }
 
 function wantsIssues(text = '') {
@@ -521,6 +554,27 @@ function compactContentResult(body, request = {}, entryLimit = DEFAULT_CONTENT_E
   }
 }
 
+function compactSearchRepository(repo = {}) {
+  return {
+    fullName: asText(repo.full_name, ''),
+    name: asText(repo.name, ''),
+    owner: asText(repo.owner?.login, ''),
+    htmlUrl: asText(repo.html_url, ''),
+    description: asText(repo.description, 'No description provided.'),
+    language: asText(repo.language, ''),
+    topics: normalizeArray(repo.topics).map(item => asText(item)).filter(Boolean).slice(0, 8),
+    license: asText(repo.license?.spdx_id || repo.license?.name, ''),
+    stars: Number(repo.stargazers_count || 0),
+    forks: Number(repo.forks_count || repo.forks || 0),
+    openIssues: Number(repo.open_issues_count || 0),
+    defaultBranch: asText(repo.default_branch, ''),
+    updatedAt: asText(repo.updated_at, ''),
+    pushedAt: asText(repo.pushed_at, ''),
+    archived: repo.archived === true,
+    disabled: repo.disabled === true,
+  }
+}
+
 function repoLine(repo = {}) {
   const parts = [
     repo.description,
@@ -582,7 +636,20 @@ function contentDetailLine(detail = {}) {
   return `${name}${size}；${excerpt}`
 }
 
+function searchRepoLine(repo = {}, index = 0) {
+  const name = repo.fullName || repo.name || `候选 ${index + 1}`
+  const language = repo.language ? `，${repo.language}` : ''
+  const license = repo.license ? `，${repo.license}` : ''
+  const topics = repo.topics?.length ? `，topics: ${repo.topics.slice(0, 4).join(', ')}` : ''
+  const archived = repo.archived ? '，archived' : ''
+  return `${name}（${repo.stars} stars，${repo.forks} forks${language}${license}${topics}${archived}）：${repo.description}`
+}
+
 function summarizeGitHubRead({
+  repoSearchRequest = null,
+  repoSearchResults = [],
+  repoSearchTotalCount = 0,
+  repoSearchIncompleteResults = false,
   repo,
   issues = [],
   issueDetail = null,
@@ -599,6 +666,21 @@ function summarizeGitHubRead({
   state = 'open',
   failures = [],
 } = {}) {
+  if (repoSearchRequest) {
+    const failureReason = failures
+      .filter(item => item.tool === 'github.search.repositories')
+      .map(item => item.reason)
+      .filter(Boolean)
+      .join('；')
+    if (failureReason) {
+      return `GitHub 仓库搜索没有拿到可用结果。查询：${repoSearchRequest.query}。失败原因：${failureReason}。全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    }
+    const incomplete = repoSearchIncompleteResults ? 'GitHub 标记结果可能不完整。' : ''
+    const resultSummary = repoSearchResults.length
+      ? `本次列出 ${repoSearchResults.length}/${repoSearchTotalCount || repoSearchResults.length} 个候选：${repoSearchResults.map(searchRepoLine).join('；')}。`
+      : '没有读到候选仓库。'
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+  }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
     return `GitHub 只读执行没有拿到仓库数据。${reason ? `失败原因：${reason}` : '请提供 owner/repo 或 GitHub 仓库链接。'}`
@@ -661,12 +743,93 @@ export async function readGitHubMission({
   pullFileLimit = DEFAULT_PR_FILE_LIMIT,
   pullReviewLimit = DEFAULT_PR_REVIEW_LIMIT,
   contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
+  repoSearchLimit = DEFAULT_REPO_SEARCH_LIMIT,
   signal,
 } = {}) {
   const text = missionText(mission, input)
   const target = extractGitHubTarget(text)
+  const repoSearchRequest = extractGitHubRepoSearchRequest(text)
   const stages = []
   const failures = []
+  const authToken = asText(githubToken || token)
+  const headers = headersForGitHub({ token: authToken, apiVersion })
+
+  if (!target && repoSearchRequest) {
+    const limit = Math.max(1, Math.min(Number(repoSearchLimit) || DEFAULT_REPO_SEARCH_LIMIT, 20))
+    const searchParams = new URLSearchParams({
+      q: repoSearchRequest.query,
+      sort: repoSearchRequest.sort || 'stars',
+      order: repoSearchRequest.order || 'desc',
+      per_page: String(limit),
+    })
+    const searchUrl = `https://api.github.com/search/repositories?${searchParams.toString()}`
+    const searchResult = await readJson(fetchJson, { url: searchUrl, headers, signal })
+    let repoSearchResults = []
+    let repoSearchTotalCount = 0
+    let repoSearchIncompleteResults = false
+    if (searchResult.ok) {
+      repoSearchResults = normalizeArray(searchResult.body?.items).map(compactSearchRepository)
+      repoSearchTotalCount = Number(searchResult.body?.total_count || repoSearchResults.length || 0)
+      repoSearchIncompleteResults = searchResult.body?.incomplete_results === true
+      stages.push({
+        tool: 'github.search.repositories',
+        status: 'ok',
+        url: searchUrl,
+        summary: `搜索 GitHub 仓库成功：${repoSearchResults.length}/${repoSearchTotalCount || repoSearchResults.length} 个候选。`,
+      })
+    } else {
+      const reason = failureText(searchResult, 'github.search.repositories')
+      failures.push({ tool: 'github.search.repositories', url: searchUrl, reason, status: searchResult.status })
+      stages.push({
+        tool: 'github.search.repositories',
+        status: 'failed',
+        url: searchUrl,
+        summary: `搜索 GitHub 仓库失败：${reason}`,
+        reason,
+      })
+    }
+    const summary = summarizeGitHubRead({
+      repoSearchRequest,
+      repoSearchResults,
+      repoSearchTotalCount,
+      repoSearchIncompleteResults,
+      failures,
+    })
+    const ok = !failures.some(item => item.tool === 'github.search.repositories')
+    return {
+      kind: 'mcp-github-read-result',
+      ok,
+      mode: 'github-repo-search',
+      target: null,
+      repo: null,
+      issues: [],
+      issueDetail: null,
+      comments: [],
+      pullDetail: null,
+      pullFiles: [],
+      pullReviews: [],
+      contentRequest: null,
+      contentDetail: null,
+      contentItems: [],
+      contentTotalItems: 0,
+      contentTruncated: false,
+      repoSearchRequest,
+      repoSearchResults,
+      repoSearchTotalCount,
+      repoSearchIncompleteResults,
+      sourceTools: unique(stages.map(stage => stage.tool)),
+      failures,
+      stages,
+      summary,
+      evidence: [
+        `GitHub 仓库搜索：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}，order=${repoSearchRequest.order || 'desc'}）`,
+        ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
+        ...repoSearchResults.map((repo, index) => `候选仓库 ${index + 1}：${searchRepoLine(repo, index)} ${repo.htmlUrl}`.trim()),
+        ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
+        '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
+      ].filter(Boolean),
+    }
+  }
 
   if (!target) {
     const summary = 'GitHub 只读执行需要明确仓库，例如 owner/repo 或 https://github.com/owner/repo。'
@@ -690,8 +853,6 @@ export async function readGitHubMission({
     }
   }
 
-  const authToken = asText(githubToken || token)
-  const headers = headersForGitHub({ token: authToken, apiVersion })
   const encodedOwner = encodeURIComponent(target.owner)
   const encodedRepo = encodeURIComponent(target.repo)
   const repoUrl = `https://api.github.com/repos/${encodedOwner}/${encodedRepo}`
