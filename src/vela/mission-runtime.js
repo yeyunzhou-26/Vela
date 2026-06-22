@@ -3,6 +3,7 @@ import path from 'path'
 import { paths } from '../paths.js'
 import { executeCapabilityAdapterRun, planCapabilityAdapterRun, prepareCapabilityAdapterResult } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
+import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapter-bridge.js'
 
 export const MISSION_STATES = [
   'Draft',
@@ -950,14 +951,7 @@ function externalMessageDesktopTarget(mission = {}) {
 }
 
 function externalMessageExecutionProfile(target = {}) {
-  const channelUrl = asText(target.appUrl, 'app://messages')
-  const adapterKey = asText(channelUrl.replace(/^app:\/\//, '').replace(/[^a-z0-9-]+/gi, '-'), 'messages')
-  return {
-    executionMode: 'simulated',
-    adapterStatus: 'real-adapter-pending',
-    realAdapterEntry: `desktop://adapters/${adapterKey}/messages.confirmed-send`,
-    modeSummary: '当前为模拟执行链路；真实适配器接入前不会打开应用、读取真实屏幕或发送。',
-  }
+  return describeDesktopAdapter(target, 'messages.confirmed-send')
 }
 
 function externalMessageDraftPayload(mission = {}) {
@@ -1063,9 +1057,7 @@ function appendExternalMessageDesktopContext(mission = {}) {
       `目标应用：${target.appName}`,
       `消息对象：${payload.recipient}`,
       `发送草稿预览：${payload.sendPreview}`,
-      `执行模式：${payload.executionMode}`,
-      `适配器状态：${payload.adapterStatus}`,
-      `真实适配器入口：${payload.realAdapterEntry}`,
+      ...desktopAdapterEvidence(payload),
       `模拟打开：${target.appUrl}`,
       '模拟屏幕上下文：screen://mock/current-chat',
       '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
@@ -1180,9 +1172,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
       `目标应用：${target.appName}`,
       `发送对象：${payload.recipient}`,
       `发送内容：${draftText}`,
-      `执行模式：${payload.executionMode}`,
-      `适配器状态：${payload.adapterStatus}`,
-      `真实适配器入口：${payload.realAdapterEntry}`,
+      ...desktopAdapterEvidence(payload),
       '发送阶段发生在 External message 权限批准之后。',
       '当前为模拟发送回执，未调用真实外部应用发送接口。',
     ],

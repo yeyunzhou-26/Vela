@@ -1,3 +1,5 @@
+import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapter-bridge.js'
+
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
   return text || fallback
@@ -273,13 +275,7 @@ function desktopTarget(mission = {}, input = {}) {
 }
 
 function desktopExecutionProfile(target = {}) {
-  const appId = asText(target.appId, 'desktop-app')
-  return {
-    executionMode: 'simulated',
-    adapterStatus: 'real-adapter-pending',
-    realAdapterEntry: `desktop://adapters/${appId}/screen-context`,
-    modeSummary: '当前为模拟桌面控制链路；真实适配器接入前不会打开应用、截图、读取真实屏幕或触发外部效果。',
-  }
+  return describeDesktopAdapter(target, 'screen-context')
 }
 
 function planDesktopAdapterRun(mission = {}, input = {}) {
@@ -899,9 +895,7 @@ function executeDesktopAdapterRun(mission = {}, input = {}) {
   const summary = desktopExecutionSummary(target)
   const evidence = [
     `目标应用：${target.appName}`,
-    `执行模式：${profile.executionMode}`,
-    `适配器状态：${profile.adapterStatus}`,
-    `真实适配器入口：${profile.realAdapterEntry}`,
+    ...desktopAdapterEvidence(profile),
     `模拟打开：${target.appUrl}`,
     '模拟屏幕上下文：screen://mock/current-app',
     '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',

@@ -20,7 +20,28 @@ try {
   const runtime = await import('./vela/mission-runtime.js')
   const capabilityAdapters = await import('./vela/capability-adapters.js')
   const capabilityRegistry = await import('./vela/capability-registry.js')
+  const desktopAdapterBridge = await import('./vela/desktop-adapter-bridge.js')
   const githubReader = await import('./vela/github-reader.js')
+
+  const wechatScreenAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'screen-context')
+  assert(wechatScreenAdapter.realAdapterEntry === 'desktop://adapters/wechat/screen-context', 'desktop bridge describes WeChat screen-context entrypoint')
+  assert(wechatScreenAdapter.executionMode === 'simulated', 'desktop bridge defaults real adapters to simulated mode')
+  assert(wechatScreenAdapter.adapterStatus === 'real-adapter-pending', 'desktop bridge marks unavailable real adapters as pending')
+  assert(wechatScreenAdapter.available === false, 'desktop bridge reports unavailable real adapter')
+  assert(desktopAdapterBridge.desktopAdapterEvidence(wechatScreenAdapter).some(item => item.includes('真实适配器可用：no')), 'desktop bridge evidence records adapter availability')
+  const wechatSendAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'messages.confirmed-send')
+  assert(wechatSendAdapter.realAdapterEntry === 'desktop://adapters/wechat/messages.confirmed-send', 'desktop bridge describes WeChat confirmed-send entrypoint')
+  assert(wechatSendAdapter.requiredGuards.includes('External message'), 'desktop bridge keeps external-message guard on send adapter')
+  const previousRealDesktopAdapters = process.env.VELA_REAL_DESKTOP_ADAPTERS
+  process.env.VELA_REAL_DESKTOP_ADAPTERS = 'wechat'
+  const liveWechatAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'screen-context')
+  assert(liveWechatAdapter.executionMode === 'live', 'desktop bridge can mark configured adapters as live')
+  assert(liveWechatAdapter.adapterStatus === 'real-adapter-ready', 'desktop bridge can mark configured adapters ready')
+  if (previousRealDesktopAdapters === undefined) {
+    delete process.env.VELA_REAL_DESKTOP_ADAPTERS
+  } else {
+    process.env.VELA_REAL_DESKTOP_ADAPTERS = previousRealDesktopAdapters
+  }
 
   const browserCapability = capabilityRegistry.findOpenCapabilitiesForText('帮我打开网页填写表单')[0]
   assert(browserCapability.id === 'browser.web-agent', 'capability registry routes browser tasks to browser agent')
