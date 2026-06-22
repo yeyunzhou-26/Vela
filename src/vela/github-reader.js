@@ -5,6 +5,7 @@ const DEFAULT_PR_FILE_LIMIT = 12
 const DEFAULT_PR_REVIEW_LIMIT = 5
 const DEFAULT_CONTENT_ENTRY_LIMIT = 20
 const DEFAULT_REPO_SEARCH_LIMIT = 5
+const DEFAULT_REPO_ANALYSIS_LIMIT = 2
 const BODY_EXCERPT_LENGTH = 360
 const CONTENT_EXCERPT_LENGTH = 1600
 
@@ -575,6 +576,202 @@ function compactSearchRepository(repo = {}) {
   }
 }
 
+function splitFullName(fullName = '') {
+  const [owner, name] = asText(fullName).split('/')
+  return { owner: asText(owner), name: asText(name) }
+}
+
+function repoApiParts(repo = {}) {
+  const fromFullName = splitFullName(repo.fullName || repo.full_name)
+  return {
+    owner: asText(repo.owner?.login || repo.owner || fromFullName.owner),
+    name: asText(repo.name || fromFullName.name),
+  }
+}
+
+function isKnownManifestPath(path = '') {
+  return /^(?:package\.json|pyproject\.toml|requirements\.txt|cargo\.toml|go\.mod|deno\.json)$/i.test(asText(path))
+}
+
+function keySourceScore(path = '') {
+  const normalized = asText(path).toLowerCase()
+  const priorities = [
+    /^src\/index\.(?:ts|tsx|js|jsx|mjs|py)$/,
+    /^src\/main\.(?:ts|tsx|js|jsx|mjs|py)$/,
+    /^src\/app\.(?:ts|tsx|js|jsx|mjs|py)$/,
+    /^src\/server\.(?:ts|js|mjs|py)$/,
+    /^index\.(?:ts|tsx|js|jsx|mjs|py)$/,
+    /^main\.(?:ts|tsx|js|jsx|mjs|py)$/,
+    /^app\.(?:ts|tsx|js|jsx|mjs|py)$/,
+  ]
+  const index = priorities.findIndex(pattern => pattern.test(normalized))
+  return index === -1 ? Number.POSITIVE_INFINITY : index
+}
+
+function chooseEntryPath(items = []) {
+  const manifests = normalizeArray(items)
+    .filter(item => item.type === 'file' && isKnownManifestPath(item.path || item.name))
+    .sort((left, right) => (left.path || left.name).localeCompare(right.path || right.name))
+  if (manifests.length) return manifests[0].path || manifests[0].name
+  const sources = normalizeArray(items)
+    .filter(item => item.type === 'file' && Number.isFinite(keySourceScore(item.path || item.name)))
+    .sort((left, right) => keySourceScore(left.path || left.name) - keySourceScore(right.path || right.name))
+  return sources[0]?.path || sources[0]?.name || ''
+}
+
+async function readSearchCandidateContent({ fetchJson, headers, signal, url, tool, pathLabel, request = {}, entryLimit }) {
+  const result = await readJson(fetchJson, { url, headers, signal })
+  if (!result.ok) {
+    const reason = failureText(result, tool)
+    return {
+      ok: false,
+      stage: {
+        tool,
+        status: 'failed',
+        url,
+        summary: `读取候选仓库 ${pathLabel} 失败：${reason}`,
+        reason,
+      },
+      failure: { tool, url, reason, status: result.status },
+      compacted: { detail: null, items: [], totalItems: 0, truncated: false },
+    }
+  }
+  const compacted = compactContentResult(result.body, request, entryLimit)
+  return {
+    ok: true,
+    stage: {
+      tool,
+      status: 'ok',
+      url,
+      summary: compacted.detail
+        ? `读取候选仓库文件 ${compacted.detail.path || pathLabel} 成功。`
+        : `读取候选仓库目录 ${pathLabel} 成功：${compacted.items.length}/${compacted.totalItems || compacted.items.length} 项。`,
+    },
+    failure: null,
+    compacted,
+  }
+}
+
+function searchCandidateAnalysisLine(analysis = {}, index = 0) {
+  const name = analysis.fullName || `候选 ${index + 1}`
+  const readme = analysis.readme?.contentExcerpt ? `README：${compactText(analysis.readme.contentExcerpt, 180)}` : 'README 未读到'
+  const entry = analysis.entryFile
+    ? `入口线索 ${analysis.entryFile.path || analysis.entryFile.name}：${compactText(analysis.entryFile.contentExcerpt, 160)}`
+    : (analysis.entryPath ? `入口线索 ${analysis.entryPath}` : '入口线索未读到')
+  const root = analysis.rootItems?.length
+    ? `根目录：${analysis.rootItems.slice(0, 8).map(item => item.path || item.name).filter(Boolean).join(', ')}`
+    : '根目录未读到'
+  const source = analysis.sourceItems?.length
+    ? `源码目录：${analysis.sourceItems.slice(0, 8).map(item => item.path || item.name).filter(Boolean).join(', ')}`
+    : ''
+  const failures = analysis.failures?.length
+    ? `局部失败：${analysis.failures.map(item => `${item.tool} ${item.reason}`).join('；')}`
+    : ''
+  return [name, readme, entry, root, source, failures].filter(Boolean).join('；')
+}
+
+async function analyzeSearchCandidate({
+  repo,
+  fetchJson,
+  headers,
+  signal,
+  contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
+} = {}) {
+  const { owner, name } = repoApiParts(repo)
+  const fullName = asText(repo.fullName, `${owner}/${name}`)
+  const stages = []
+  const failures = []
+  const analysis = {
+    fullName,
+    htmlUrl: asText(repo.htmlUrl, owner && name ? `https://github.com/${owner}/${name}` : ''),
+    readme: null,
+    rootItems: [],
+    sourceItems: [],
+    entryPath: '',
+    entryFile: null,
+    failures,
+  }
+  if (!owner || !name) {
+    failures.push({ tool: 'github.search.candidate.parse', reason: '候选仓库缺少 owner/name' })
+    stages.push({
+      tool: 'github.search.candidate.parse',
+      status: 'failed',
+      url: 'github://search-candidate/parse',
+      summary: '候选仓库缺少 owner/name，跳过深读。',
+      reason: '候选仓库缺少 owner/name',
+    })
+    return { analysis, stages }
+  }
+
+  const encodedOwner = encodeURIComponent(owner)
+  const encodedRepo = encodeURIComponent(name)
+  const repoUrl = `https://api.github.com/repos/${encodedOwner}/${encodedRepo}`
+  const readmeResult = await readSearchCandidateContent({
+    fetchJson,
+    headers,
+    signal,
+    url: `${repoUrl}/readme`,
+    tool: 'github.search.candidate.readme',
+    pathLabel: 'README',
+    request: { path: 'README', kind: 'readme' },
+    entryLimit: contentEntryLimit,
+  })
+  stages.push(readmeResult.stage)
+  if (readmeResult.ok) analysis.readme = readmeResult.compacted.detail
+  else failures.push(readmeResult.failure)
+
+  const rootResult = await readSearchCandidateContent({
+    fetchJson,
+    headers,
+    signal,
+    url: `${repoUrl}/contents`,
+    tool: 'github.search.candidate.root',
+    pathLabel: '/',
+    request: { path: '', kind: 'directory' },
+    entryLimit: contentEntryLimit,
+  })
+  stages.push(rootResult.stage)
+  if (rootResult.ok) analysis.rootItems = rootResult.compacted.items
+  else failures.push(rootResult.failure)
+
+  const hasSrcDirectory = analysis.rootItems.some(item => item.type === 'dir' && (item.path || item.name) === 'src')
+  if (hasSrcDirectory) {
+    const srcResult = await readSearchCandidateContent({
+      fetchJson,
+      headers,
+      signal,
+      url: `${repoUrl}/contents/src`,
+      tool: 'github.search.candidate.src',
+      pathLabel: 'src',
+      request: { path: 'src', kind: 'directory' },
+      entryLimit: contentEntryLimit,
+    })
+    stages.push(srcResult.stage)
+    if (srcResult.ok) analysis.sourceItems = srcResult.compacted.items
+    else failures.push(srcResult.failure)
+  }
+
+  const entryPath = chooseEntryPath([...analysis.rootItems, ...analysis.sourceItems])
+  analysis.entryPath = entryPath
+  if (entryPath) {
+    const entryResult = await readSearchCandidateContent({
+      fetchJson,
+      headers,
+      signal,
+      url: `${repoUrl}/contents/${encodeGitHubPath(entryPath)}`,
+      tool: 'github.search.candidate.entry',
+      pathLabel: entryPath,
+      request: { path: entryPath, kind: 'file' },
+      entryLimit: contentEntryLimit,
+    })
+    stages.push(entryResult.stage)
+    if (entryResult.ok) analysis.entryFile = entryResult.compacted.detail
+    else failures.push(entryResult.failure)
+  }
+
+  return { analysis, stages }
+}
+
 function repoLine(repo = {}) {
   const parts = [
     repo.description,
@@ -648,6 +845,7 @@ function searchRepoLine(repo = {}, index = 0) {
 function summarizeGitHubRead({
   repoSearchRequest = null,
   repoSearchResults = [],
+  repoSearchAnalyses = [],
   repoSearchTotalCount = 0,
   repoSearchIncompleteResults = false,
   repo,
@@ -679,7 +877,10 @@ function summarizeGitHubRead({
     const resultSummary = repoSearchResults.length
       ? `本次列出 ${repoSearchResults.length}/${repoSearchTotalCount || repoSearchResults.length} 个候选：${repoSearchResults.map(searchRepoLine).join('；')}。`
       : '没有读到候选仓库。'
-    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
+    const analysisSummary = repoSearchAnalyses.length
+      ? `已深读 ${repoSearchAnalyses.length} 个候选：${repoSearchAnalyses.map(searchCandidateAnalysisLine).join('；')}。`
+      : ''
+    return `已搜索 GitHub 仓库：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}）。${resultSummary}${analysisSummary}${incomplete}全程只读，没有 star、fork、评论、改仓库、提交或推送。`
   }
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
@@ -744,6 +945,7 @@ export async function readGitHubMission({
   pullReviewLimit = DEFAULT_PR_REVIEW_LIMIT,
   contentEntryLimit = DEFAULT_CONTENT_ENTRY_LIMIT,
   repoSearchLimit = DEFAULT_REPO_SEARCH_LIMIT,
+  repoAnalysisLimit = DEFAULT_REPO_ANALYSIS_LIMIT,
   signal,
 } = {}) {
   const text = missionText(mission, input)
@@ -765,6 +967,7 @@ export async function readGitHubMission({
     const searchUrl = `https://api.github.com/search/repositories?${searchParams.toString()}`
     const searchResult = await readJson(fetchJson, { url: searchUrl, headers, signal })
     let repoSearchResults = []
+    let repoSearchAnalyses = []
     let repoSearchTotalCount = 0
     let repoSearchIncompleteResults = false
     if (searchResult.ok) {
@@ -777,6 +980,20 @@ export async function readGitHubMission({
         url: searchUrl,
         summary: `搜索 GitHub 仓库成功：${repoSearchResults.length}/${repoSearchTotalCount || repoSearchResults.length} 个候选。`,
       })
+      const numericAnalysisLimit = Number(repoAnalysisLimit)
+      const requestedAnalysisLimit = Number.isFinite(numericAnalysisLimit) ? numericAnalysisLimit : DEFAULT_REPO_ANALYSIS_LIMIT
+      const analysisLimit = Math.max(0, Math.min(requestedAnalysisLimit, repoSearchResults.length, 5))
+      for (const repo of repoSearchResults.slice(0, analysisLimit)) {
+        const candidate = await analyzeSearchCandidate({
+          repo,
+          fetchJson,
+          headers,
+          signal,
+          contentEntryLimit,
+        })
+        repoSearchAnalyses.push(candidate.analysis)
+        stages.push(...candidate.stages)
+      }
     } else {
       const reason = failureText(searchResult, 'github.search.repositories')
       failures.push({ tool: 'github.search.repositories', url: searchUrl, reason, status: searchResult.status })
@@ -791,6 +1008,7 @@ export async function readGitHubMission({
     const summary = summarizeGitHubRead({
       repoSearchRequest,
       repoSearchResults,
+      repoSearchAnalyses,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       failures,
@@ -815,6 +1033,7 @@ export async function readGitHubMission({
       contentTruncated: false,
       repoSearchRequest,
       repoSearchResults,
+      repoSearchAnalyses,
       repoSearchTotalCount,
       repoSearchIncompleteResults,
       sourceTools: unique(stages.map(stage => stage.tool)),
@@ -825,6 +1044,7 @@ export async function readGitHubMission({
         `GitHub 仓库搜索：${repoSearchRequest.query}（sort=${repoSearchRequest.sort || 'stars'}，order=${repoSearchRequest.order || 'desc'}）`,
         ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
         ...repoSearchResults.map((repo, index) => `候选仓库 ${index + 1}：${searchRepoLine(repo, index)} ${repo.htmlUrl}`.trim()),
+        ...repoSearchAnalyses.map((analysis, index) => `候选深读 ${index + 1}：${searchCandidateAnalysisLine(analysis, index)} ${analysis.htmlUrl}`.trim()),
         ...failures.map(item => `GitHub 搜索失败：${item.tool} ${item.url}（${item.reason}）`),
         '只读边界：未 star、未 fork、未写评论、未改仓库、未提交、未推送代码、未读取本地凭证。',
       ].filter(Boolean),
