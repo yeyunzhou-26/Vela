@@ -911,12 +911,24 @@ function isExternalMessageMission(mission = {}) {
     || normalizeArray(mission.plan).some(step => ['inspect-context', 'draft-reply', 'confirm-send'].includes(asText(step?.id)))
 }
 
-function draftExternalMessageText(mission = {}) {
-  const sourceText = [
+function externalMessageSourceText(mission = {}) {
+  return [
     mission.title,
     mission.goal,
     ...normalizeArray(mission.inputs).map(input => input?.text),
   ].map(value => asText(value)).join(' ')
+}
+
+function externalMessageRecipient(mission = {}) {
+  const sourceText = externalMessageSourceText(mission)
+  if (/(老婆|妻子|太太|媳妇)/.test(sourceText)) return '老婆'
+  if (/(老公|先生)/.test(sourceText)) return '老公'
+  if (/(同事|团队|team|colleague)/i.test(sourceText)) return '同事'
+  return '对方'
+}
+
+function draftExternalMessageText(mission = {}) {
+  const sourceText = externalMessageSourceText(mission)
   if (/(老婆|妻子|太太|媳妇)/.test(sourceText)) return '收到，我晚点跟你说。'
   if (/(老公|先生)/.test(sourceText)) return '收到，我晚点跟你说。'
   return '收到，我看到了，稍后回复你。'
@@ -927,11 +939,7 @@ function externalMessageDraftSummary(mission = {}) {
 }
 
 function externalMessageDesktopTarget(mission = {}) {
-  const sourceText = [
-    mission.title,
-    mission.goal,
-    ...normalizeArray(mission.inputs).map(input => input?.text),
-  ].map(value => asText(value)).join(' ')
+  const sourceText = externalMessageSourceText(mission)
   if (/(?:微信|wechat)/i.test(sourceText)) {
     return { appName: '微信', appUrl: 'app://wechat' }
   }
@@ -939,6 +947,24 @@ function externalMessageDesktopTarget(mission = {}) {
     return { appName: '邮件', appUrl: 'app://mail' }
   }
   return { appName: '消息应用', appUrl: 'app://messages' }
+}
+
+function externalMessageDraftPayload(mission = {}) {
+  const target = externalMessageDesktopTarget(mission)
+  const recipient = externalMessageRecipient(mission)
+  const draftText = draftExternalMessageText(mission)
+  return {
+    channel: target.appName,
+    channelUrl: target.appUrl,
+    recipient,
+    draftText,
+    sendPreview: `发给${recipient}（${target.appName}）：${draftText}`,
+    guardrail: '用户明确确认前不发送；确认后才记录发送动作。',
+  }
+}
+
+function externalMessagePayloadSummary(payload = {}) {
+  return `渠道：${asText(payload.channel, '消息应用')}；对象：${asText(payload.recipient, '对方')}；内容：「${asText(payload.draftText)}」；Guard：${asText(payload.guardrail)}`
 }
 
 function hasExternalMessageDesktopContext(mission = {}) {
@@ -951,7 +977,8 @@ function appendExternalMessageDesktopContext(mission = {}) {
   const toolCallId = makeId('tool-desktop-app-control-inspect')
   const artifactId = makeId('artifact-desktop-context')
   const target = externalMessageDesktopTarget(mission)
-  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；没有真实打开应用、截图、读取真实屏幕或发送消息。`
+  const payload = externalMessageDraftPayload(mission)
+  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；目标对象：${payload.recipient}；没有真实打开应用、截图、读取真实屏幕或发送消息。`
 
   appendCurrentMissionToolCall({
     id: toolCallId,
@@ -1011,10 +1038,12 @@ function appendExternalMessageDesktopContext(mission = {}) {
     summary: '外部消息任务已先完成桌面上下文原型检查；没有隐藏发送动作。',
     evidence: [
       `目标应用：${target.appName}`,
+      `消息对象：${payload.recipient}`,
+      `发送草稿预览：${payload.sendPreview}`,
       `模拟打开：${target.appUrl}`,
       '模拟屏幕上下文：screen://mock/current-chat',
       '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
-      '真正发送前仍需要 External message 确认。',
+      `Guard：${payload.guardrail}`,
     ],
   })
 }
@@ -1050,8 +1079,8 @@ function hasExternalMessageSendResult(mission = {}) {
 }
 
 function externalMessageSendReceiptSummary(mission = {}) {
-  const target = externalMessageDesktopTarget(mission)
-  return `已按确认发送到${target.appName}：「${draftExternalMessageText(mission)}」。`
+  const payload = externalMessageDraftPayload(mission)
+  return `已按确认通过${payload.channel}发给${payload.recipient}：「${payload.draftText}」。`
 }
 
 function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
@@ -1059,7 +1088,8 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
   if (hasExternalMessageSendResult(mission)) return mission
 
   const target = externalMessageDesktopTarget(mission)
-  const draftText = draftExternalMessageText(mission)
+  const payload = externalMessageDraftPayload(mission)
+  const draftText = payload.draftText
   const toolCallId = makeId('tool-messages-outbound-send')
   const artifactId = makeId('artifact-send-receipt')
   const summary = `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；接入真实应用发送前仍必须由 External message 确认触发。`
@@ -1090,7 +1120,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
     stage: 'confirmed-send',
     url: `external://messages/${encodeURIComponent(target.appName)}/mock-send`,
     planStepId: 'confirm-send',
-    summary: `根据用户确认记录模拟发送：「${draftText}」。`,
+    summary: `根据用户确认记录模拟发送给${payload.recipient}：「${draftText}」。`,
   })
   appendCurrentMissionArtifact({
     id: artifactId,
@@ -1112,6 +1142,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
     evidence: [
       `批准记录：${permission.id}`,
       `目标应用：${target.appName}`,
+      `发送对象：${payload.recipient}`,
       `发送内容：${draftText}`,
       '发送阶段发生在 External message 权限批准之后。',
       '当前为模拟发送回执，未调用真实外部应用发送接口。',
@@ -1137,6 +1168,8 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
 function advanceExternalMessageMissionByCommand(current = {}, input = {}, text = '') {
   const createdAt = new Date().toISOString()
   const summary = externalMessageDraftSummary(current)
+  const payload = externalMessageDraftPayload(current)
+  const payloadSummary = externalMessagePayloadSummary(payload)
   const nextStep = `${summary} 这样发可以吗？`
   const action = makeAgentActionRecord({
     role: 'Operator',
@@ -1159,18 +1192,19 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     title: '拟发送内容',
     kind: 'draft',
     uri: `vela://missions/${encodeURIComponent(asText(current.id, 'mission'))}/external-message-draft`,
-    summary,
+    summary: `${summary} ${payloadSummary}`,
     planStepId: 'draft-reply',
   })
   return appendCurrentMissionPermission({
     action: nextStep,
     risk: 'External message',
     decision: 'requested',
-    summary,
-    reason: '发送前需要你确认。',
+    summary: `${summary} ${payloadSummary}`,
+    reason: `发送前需要你确认。${payloadSummary}`,
     requestedBy: 'Vela Operator',
     planStepId: 'confirm-send',
     toolCallId: 'external.message.send',
+    scope: `external://messages/${encodeURIComponent(payload.channel)}/${encodeURIComponent(payload.recipient)}`,
     screenContext: input.screenContext,
   })
 }
