@@ -731,6 +731,8 @@ function normalizeMcpGithubReadResult(value) {
     stages: normalizeArray(value.stages).map(normalizeMcpToolStage),
     repo: value.repo || null,
     issues: normalizeArray(value.issues),
+    issueDetail: value.issueDetail || null,
+    comments: normalizeArray(value.comments),
   }
 }
 

@@ -105,6 +105,64 @@ try {
   assert(githubReadResult.sourceTools.includes('github.issues.list'), 'GitHub reader records issues endpoint')
   assert(githubReadResult.summary.includes('Polish Vela mission review'), 'GitHub reader summarizes issue titles')
   assert(githubReadResult.evidence.some(item => item.includes('未写评论')), 'GitHub reader records read-only boundary evidence')
+  const githubDetailTarget = githubReader.extractGitHubTarget('用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/issues/11 的详情和评论')
+  assert(githubDetailTarget.issueNumber === 11, 'GitHub reader extracts issue number from issue URL')
+  const githubIssueDetailResult = await githubReader.readGitHubMission({
+    mission: {
+      title: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/issues/11 的详情和评论',
+      goal: '用 GitHub 查看 https://github.com/yeyunzhou-26/Vela/issues/11 的详情和评论',
+      inputs: [],
+    },
+    fetchJson: async ({ url }) => {
+      if (url.includes('/issues/11/comments')) {
+        return [
+          {
+            id: 1001,
+            body: 'Reviewer confirmed the read-only path should keep comments in evidence.',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/issues/11#issuecomment-1001',
+            user: { login: 'reviewer' },
+            author_association: 'COLLABORATOR',
+            created_at: '2026-06-22T09:30:00Z',
+            updated_at: '2026-06-22T09:35:00Z',
+          },
+        ]
+      }
+      if (url.match(/\/issues\/11$/)) {
+        return {
+          number: 11,
+          title: 'Read a concrete issue with comments',
+          state: 'open',
+          html_url: 'https://github.com/yeyunzhou-26/Vela/issues/11',
+          user: { login: 'yeyunzhou-26' },
+          labels: [{ name: 'github' }],
+          body: 'Vela should read a single issue body and the first comments before planning a reply.',
+          comments: 1,
+          created_at: '2026-06-22T09:00:00Z',
+          updated_at: '2026-06-22T09:20:00Z',
+        }
+      }
+      return {
+        full_name: 'yeyunzhou-26/Vela',
+        name: 'Vela',
+        owner: { login: 'yeyunzhou-26' },
+        html_url: 'https://github.com/yeyunzhou-26/Vela',
+        description: 'Mission-first AI Operating Desk',
+        default_branch: 'main',
+        stargazers_count: 0,
+        forks_count: 0,
+        open_issues_count: 1,
+        visibility: 'public',
+        updated_at: '2026-06-22T09:00:00Z',
+      }
+    },
+  })
+  assert(githubIssueDetailResult.ok === true, 'GitHub reader completes issue detail lookup')
+  assert(githubIssueDetailResult.mode === 'github-issue-detail', 'GitHub reader records issue detail mode')
+  assert(githubIssueDetailResult.sourceTools.includes('github.issue.get'), 'GitHub reader records issue detail endpoint')
+  assert(githubIssueDetailResult.sourceTools.includes('github.issue.comments.list'), 'GitHub reader records issue comments endpoint')
+  assert(githubIssueDetailResult.issueDetail.bodyExcerpt.includes('single issue body'), 'GitHub reader keeps issue body excerpt')
+  assert(githubIssueDetailResult.comments.at(-1).bodyExcerpt.includes('comments in evidence'), 'GitHub reader keeps comment excerpt')
+  assert(githubIssueDetailResult.summary.includes('Read a concrete issue with comments'), 'GitHub reader summarizes issue detail')
   const multiCapabilityRefs = capabilityRegistry.findOpenCapabilitiesForText('用 github 工具查看 issue 并生成报告')
   assert(multiCapabilityRefs[0].id === 'tool.mcp-bridge', 'capability registry ranks MCP bridge first for GitHub tool plus report tasks')
   assert(multiCapabilityRefs.some(item => item.id === 'files.document-work'), 'capability registry also keeps document capability for GitHub report tasks')
@@ -748,6 +806,71 @@ try {
   assert(githubStages.some(item => item.toolName === 'github.repo.get' && item.result === 'ok'), 'async GitHub command records repo read stage')
   assert(githubStages.some(item => item.toolName === 'github.issues.list' && item.result === 'ok'), 'async GitHub command records issue read stage')
   assert(githubStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub command records skipped write-action stage')
+
+  runtime.applyCurrentMissionCommand({
+    text: '用 github 工具查看 https://github.com/yeyunzhou-26/Vela/issues/12 的详情和评论',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const githubDetailReviewing = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    capabilityAdapterDeps: {
+      fetchJson: async ({ url }) => {
+        if (url.includes('/issues/12/comments')) {
+          return [
+            {
+              id: 1201,
+              body: 'The operator should summarize this before drafting any response.',
+              html_url: 'https://github.com/yeyunzhou-26/Vela/issues/12#issuecomment-1201',
+              user: { login: 'operator' },
+              author_association: 'MEMBER',
+              created_at: '2026-06-22T10:30:00Z',
+              updated_at: '2026-06-22T10:30:00Z',
+            },
+          ]
+        }
+        if (url.match(/\/issues\/12$/)) {
+          return {
+            number: 12,
+            title: 'Understand issue context before acting',
+            state: 'open',
+            html_url: 'https://github.com/yeyunzhou-26/Vela/issues/12',
+            user: { login: 'yeyunzhou-26' },
+            labels: [{ name: 'runtime' }],
+            body: 'Before Vela replies or edits anything, it should read the issue body and comments.',
+            comments: 1,
+            created_at: '2026-06-22T10:00:00Z',
+            updated_at: '2026-06-22T10:15:00Z',
+          }
+        }
+        return {
+          full_name: 'yeyunzhou-26/Vela',
+          name: 'Vela',
+          owner: { login: 'yeyunzhou-26' },
+          html_url: 'https://github.com/yeyunzhou-26/Vela',
+          description: 'Mission-first AI Operating Desk',
+          default_branch: 'main',
+          stargazers_count: 0,
+          forks_count: 0,
+          open_issues_count: 1,
+          visibility: 'public',
+          updated_at: '2026-06-22T10:00:00Z',
+        }
+      },
+    },
+  })
+  assert(githubDetailReviewing.state === 'Reviewing', 'async GitHub issue detail command moves to reviewing')
+  assert(githubDetailReviewing.toolCalls.at(-1).result.includes('github.issue.get'), 'async GitHub issue detail command records detail source tool')
+  assert(githubDetailReviewing.toolCalls.at(-1).result.includes('github.issue.comments.list'), 'async GitHub issue detail command records comments source tool')
+  assert(githubDetailReviewing.artifacts.at(-1).summary.includes('Understand issue context before acting'), 'async GitHub issue detail command summarizes issue detail')
+  assert(githubDetailReviewing.artifacts.at(-1).summary.includes('operator'), 'async GitHub issue detail command summarizes comments')
+  assert(githubDetailReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('issuecomment-1201')), 'async GitHub issue detail command keeps comment evidence')
+  const githubDetailToolId = githubDetailReviewing.toolCalls.at(-1).id
+  const githubDetailStages = githubDetailReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === githubDetailToolId)
+  assert(githubDetailStages.some(item => item.toolName === 'github.issue.get' && item.result === 'ok'), 'async GitHub issue detail command records detail read stage')
+  assert(githubDetailStages.some(item => item.toolName === 'github.issue.comments.list' && item.result === 'ok'), 'async GitHub issue detail command records comments read stage')
+  assert(githubDetailStages.some(item => item.toolName === 'mcp.write-action' && item.result === 'skipped'), 'async GitHub issue detail command records skipped write-action stage')
 
   runtime.applyCurrentMissionCommand({
     text: '用 github 工具查看 missing-owner/missing-repo issue',

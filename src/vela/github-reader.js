@@ -1,5 +1,7 @@
 const DEFAULT_GITHUB_API_VERSION = '2022-11-28'
 const DEFAULT_ISSUE_LIMIT = 5
+const DEFAULT_COMMENT_LIMIT = 5
+const BODY_EXCERPT_LENGTH = 360
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
@@ -46,6 +48,16 @@ function cleanRepoName(value = '') {
     .replace(/[.,;:!?，。；：！？）)]+$/g, '')
 }
 
+function compactText(value = '', max = BODY_EXCERPT_LENGTH) {
+  const text = asText(value)
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, max)}...`
+}
+
 function hasGitHubContext(text = '') {
   return /(?:github|repo|repository|仓库|issue|issues|议题|pull request|pr\b|拉取请求)/i.test(text)
 }
@@ -59,6 +71,7 @@ export function extractGitHubTarget(value = '') {
     return {
       owner: urlMatch[1],
       repo: cleanRepoName(urlMatch[2]),
+      issueNumber: extractGitHubIssueNumber(text),
       source: 'github-url',
     }
   }
@@ -69,8 +82,22 @@ export function extractGitHubTarget(value = '') {
   return {
     owner: slugMatch[1],
     repo: cleanRepoName(slugMatch[2]),
+    issueNumber: extractGitHubIssueNumber(text),
     source: 'owner-repo',
   }
+}
+
+export function extractGitHubIssueNumber(value = '') {
+  const text = asText(value)
+  if (!text) return null
+  const urlMatch = text.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+\/(?:issues|pull)\/(\d+)/i)
+  if (urlMatch) return Number(urlMatch[1])
+
+  if (!hasGitHubContext(text)) return null
+  const labeledMatch = text.match(/(?:issue|issues|议题|问题|bug|pull request|pr|拉取请求)\s*#?\s*(\d+)/i)
+  if (labeledMatch) return Number(labeledMatch[1])
+  const hashMatch = text.match(/#(\d+)\b/)
+  return hashMatch ? Number(hashMatch[1]) : null
 }
 
 function wantsIssues(text = '') {
@@ -121,11 +148,20 @@ function normalizeFetchResult(raw, url = '') {
       error: asText(value.error || value.reason || value.message, `GitHub request failed${value.status ? ` (${value.status})` : ''}`),
     }
   }
+  if ('status' in value && ('body' in value || 'data' in value)) {
+    return {
+      ok: true,
+      status: Number(value.status) || 200,
+      url,
+      body: value.body ?? value.data,
+      error: '',
+    }
+  }
   return {
     ok: true,
     status: Number(value.status) || 200,
     url,
-    body: value.body ?? value.data ?? value,
+    body: value,
     error: '',
   }
 }
@@ -198,8 +234,25 @@ function compactIssue(issue = {}) {
     htmlUrl: asText(issue.html_url, ''),
     user: asText(issue.user?.login, ''),
     labels: normalizeArray(issue.labels).map(label => asText(label?.name || label)).filter(Boolean),
+    bodyExcerpt: compactText(issue.body || issue.body_text || ''),
+    commentsCount: Number(issue.comments || 0),
+    createdAt: asText(issue.created_at, ''),
     updatedAt: asText(issue.updated_at, ''),
+    closedAt: asText(issue.closed_at, ''),
+    stateReason: asText(issue.state_reason, ''),
     isPullRequest: !!issue.pull_request,
+  }
+}
+
+function compactComment(comment = {}) {
+  return {
+    id: Number(comment.id || 0),
+    user: asText(comment.user?.login, ''),
+    bodyExcerpt: compactText(comment.body || comment.body_text || ''),
+    htmlUrl: asText(comment.html_url, ''),
+    createdAt: asText(comment.created_at, ''),
+    updatedAt: asText(comment.updated_at, ''),
+    authorAssociation: asText(comment.author_association, ''),
   }
 }
 
@@ -220,12 +273,39 @@ function issueLine(issue = {}) {
   return `#${issue.number} ${issue.title}${labels}（${prefix}，${issue.state || 'unknown'}）`
 }
 
-function summarizeGitHubRead({ repo, issues = [], includeIssues = false, state = 'open', failures = [] } = {}) {
+function issueDetailLine(issue = {}) {
+  const base = issueLine(issue)
+  const body = issue.bodyExcerpt ? `正文摘录：${issue.bodyExcerpt}` : '没有正文摘录'
+  const comments = Number.isFinite(issue.commentsCount) ? `评论数 ${issue.commentsCount}` : ''
+  return [base, body, comments].filter(Boolean).join('；')
+}
+
+function commentLine(comment = {}, index = 0) {
+  const author = comment.user || `评论 ${index + 1}`
+  const body = comment.bodyExcerpt || '无评论正文'
+  return `${author}：${body}`
+}
+
+function summarizeGitHubRead({
+  repo,
+  issues = [],
+  issueDetail = null,
+  comments = [],
+  includeIssues = false,
+  state = 'open',
+  failures = [],
+} = {}) {
   if (!repo) {
     const reason = failures.map(item => item.reason || item.error).filter(Boolean).join('；')
     return `GitHub 只读执行没有拿到仓库数据。${reason ? `失败原因：${reason}` : '请提供 owner/repo 或 GitHub 仓库链接。'}`
   }
   const intro = `已读取 GitHub 仓库 ${repo.fullName}：${repoLine(repo)}。`
+  if (issueDetail) {
+    const commentSummary = comments.length
+      ? `已读取 ${comments.length} 条评论：${comments.map(commentLine).join('；')}。`
+      : '没有读到评论内容。'
+    return `${intro}已读取详情：${issueDetailLine(issueDetail)}。${commentSummary}全程只读，没有写评论、改 issue、合并 PR、推送代码或访问凭证。`
+  }
   if (!includeIssues) return `${intro}本次只读取仓库元数据，没有执行写入、评论、合并、推送或状态变更。`
   const issueSummary = issues.length
     ? `已读取 ${state} issue/PR 列表，本次列出 ${issues.length} 项：${issues.map(issueLine).join('；')}。`
@@ -245,6 +325,7 @@ export async function readGitHubMission({
   token = '',
   apiVersion = DEFAULT_GITHUB_API_VERSION,
   issueLimit = DEFAULT_ISSUE_LIMIT,
+  commentLimit = DEFAULT_COMMENT_LIMIT,
   signal,
 } = {}) {
   const text = missionText(mission, input)
@@ -303,10 +384,60 @@ export async function readGitHubMission({
   }
 
   const includeIssues = wantsIssues(text)
+  const issueNumber = target.issueNumber || extractGitHubIssueNumber(text)
   const state = issueStateForText(text)
   let issues = []
+  let issueDetail = null
+  let comments = []
 
-  if (repo && includeIssues) {
+  if (repo && issueNumber) {
+    const issueUrl = `${repoUrl}/issues/${issueNumber}`
+    const issueResult = await readJson(fetchJson, { url: issueUrl, headers, signal })
+    if (issueResult.ok) {
+      issueDetail = compactIssue(issueResult.body)
+      stages.push({
+        tool: 'github.issue.get',
+        status: 'ok',
+        url: issueUrl,
+        summary: `读取 issue/PR #${issueNumber} 详情成功。`,
+      })
+    } else {
+      const reason = failureText(issueResult, 'github.issue.get')
+      failures.push({ tool: 'github.issue.get', url: issueUrl, reason, status: issueResult.status })
+      stages.push({
+        tool: 'github.issue.get',
+        status: 'failed',
+        url: issueUrl,
+        summary: `读取 issue/PR #${issueNumber} 详情失败：${reason}`,
+        reason,
+      })
+    }
+
+    if (issueDetail) {
+      const limit = Math.max(1, Math.min(Number(commentLimit) || DEFAULT_COMMENT_LIMIT, 20))
+      const commentsUrl = `${issueUrl}/comments?per_page=${limit}`
+      const commentsResult = await readJson(fetchJson, { url: commentsUrl, headers, signal })
+      if (commentsResult.ok) {
+        comments = normalizeArray(commentsResult.body).map(compactComment)
+        stages.push({
+          tool: 'github.issue.comments.list',
+          status: 'ok',
+          url: commentsUrl,
+          summary: `读取 issue/PR #${issueNumber} 评论成功：${comments.length} 条。`,
+        })
+      } else {
+        const reason = failureText(commentsResult, 'github.issue.comments.list')
+        failures.push({ tool: 'github.issue.comments.list', url: commentsUrl, reason, status: commentsResult.status })
+        stages.push({
+          tool: 'github.issue.comments.list',
+          status: 'failed',
+          url: commentsUrl,
+          summary: `读取 issue/PR #${issueNumber} 评论失败：${reason}`,
+          reason,
+        })
+      }
+    }
+  } else if (repo && includeIssues) {
     const limit = Math.max(1, Math.min(Number(issueLimit) || DEFAULT_ISSUE_LIMIT, 20))
     const issuesUrl = `${repoUrl}/issues?state=${encodeURIComponent(state)}&per_page=${limit}`
     const issuesResult = await readJson(fetchJson, { url: issuesUrl, headers, signal })
@@ -331,16 +462,20 @@ export async function readGitHubMission({
     }
   }
 
-  const summary = summarizeGitHubRead({ repo, issues, includeIssues, state, failures })
-  const ok = !!repo && (!includeIssues || !failures.some(item => item.tool === 'github.issues.list'))
+  const summary = summarizeGitHubRead({ repo, issues, issueDetail, comments, includeIssues, state, failures })
+  const ok = !!repo
+    && (!issueNumber || (!!issueDetail && !failures.some(item => item.tool === 'github.issue.comments.list')))
+    && (!includeIssues || !!issueNumber || !failures.some(item => item.tool === 'github.issues.list'))
   const sourceTools = unique(stages.map(stage => stage.tool))
   return {
     kind: 'mcp-github-read-result',
     ok,
-    mode: includeIssues ? 'github-issues' : 'github-repo',
+    mode: issueNumber ? 'github-issue-detail' : (includeIssues ? 'github-issues' : 'github-repo'),
     target,
     repo,
     issues,
+    issueDetail,
+    comments,
     sourceTools,
     failures,
     stages,
@@ -350,6 +485,8 @@ export async function readGitHubMission({
       repo ? `仓库：${repo.fullName} ${repo.htmlUrl}` : '',
       ...stages.map(stage => `${stage.tool} ${stage.status}：${stage.url}（${stage.reason || stage.summary}）`),
       ...issues.map(issue => `${issueLine(issue)} ${issue.htmlUrl}`.trim()),
+      issueDetail ? `${issueDetailLine(issueDetail)} ${issueDetail.htmlUrl}`.trim() : '',
+      ...comments.map((comment, index) => `评论 ${index + 1}：${commentLine(comment, index)} ${comment.htmlUrl}`.trim()),
       ...failures.map(item => `GitHub 读取失败：${item.tool} ${item.url}（${item.reason}）`),
       '只读边界：未写评论、未改 issue、未合并 PR、未推送代码、未读取本地凭证。',
     ].filter(Boolean),
