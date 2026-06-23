@@ -8,9 +8,11 @@ import {
   pollWechatIlinkQrLoginStatus,
   prepareWechatIlinkLoginRequest,
   saveWechatIlinkCredentials,
+  sendWechatIlinkTextMessage,
   startWechatIlinkQrLoginSession,
   wechatIlinkQrSessionEvidence,
   wechatIlinkQrStatusEvidence,
+  wechatIlinkSendEvidence,
 } from './wechat-ilink-adapter.js'
 
 export const MISSION_STATES = [
@@ -1745,31 +1747,39 @@ function externalMessageSendReceiptSummary(mission = {}) {
   return `已按确认记录${payload.channel}模拟发送给${payload.recipient}：「${payload.draftText}」。`
 }
 
-function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
+function completeExternalMessageAfterApproval(mission = {}, permission = {}, options = {}) {
   if (!isExternalMessageSendPermission(permission) || !isExternalMessageMission(mission)) return mission
   if (hasExternalMessageSendResult(mission)) return mission
 
   const target = externalMessageDesktopTarget(mission)
   const payload = externalMessageDraftPayload(mission)
   const draftText = payload.draftText
+  const sendResult = options.sendResult || null
+  const adapterAttempted = sendResult?.adapterId === 'wechat-ilink'
+  const sendBlocked = adapterAttempted && ['blocked', 'failed'].includes(asText(sendResult.status))
+  const liveSent = adapterAttempted && sendResult.messageSent === true
   const toolCallId = makeId('tool-messages-outbound-send')
   const artifactId = makeId('artifact-send-receipt')
-  const summary = `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；真实${target.appName}发送入口 ${payload.realAdapterEntry} 尚未接入，接入后仍必须由 External message 确认触发。`
+  const summary = sendBlocked
+    ? `已获得发送确认，但真实${target.appName}发送受阻：${asText(sendResult.reason, '未知错误')}。`
+    : (liveSent
+        ? `已按确认记录通过微信 iLink 发送给${payload.recipient}：「${draftText}」。`
+        : `${externalMessageSendReceiptSummary(mission)} 当前适配器记录模拟发送回执；真实${target.appName}发送入口 ${payload.realAdapterEntry} 尚未接入或未启用，接入后仍必须由 External message 确认触发。`)
 
   appendCurrentMissionAgentAction({
     role: 'Operator',
     title: '发送已确认回复',
-    status: 'sent',
+    status: sendBlocked ? 'blocked' : 'sent',
     planStepId: 'confirm-send',
     summary,
-    result: '已发送',
+    result: sendBlocked ? '发送受阻' : '已发送',
     requiresReview: false,
   })
   appendCurrentMissionToolCall({
     id: toolCallId,
     toolName: 'messages.outbound.send',
     role: 'Operator',
-    status: 'ok',
+    status: sendBlocked ? 'blocked' : 'ok',
     planStepId: 'confirm-send',
     risk: 'External message',
     result: summary,
@@ -1778,21 +1788,31 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
     toolName: 'messages.external-send',
     toolCallId,
     role: 'Operator',
-    status: 'ok',
-    stage: 'confirmed-send',
-    url: `external://messages/${encodeURIComponent(target.appName)}/mock-send`,
+    status: sendBlocked ? 'blocked' : 'ok',
+    stage: liveSent ? 'confirmed-send-live' : (sendBlocked ? 'confirmed-send-blocked' : 'confirmed-send'),
+    url: liveSent
+      ? `external://messages/${encodeURIComponent(target.appName)}/wechat-ilink`
+      : `external://messages/${encodeURIComponent(target.appName)}/mock-send`,
     planStepId: 'confirm-send',
-    summary: `根据用户确认记录模拟发送给${payload.recipient}：「${draftText}」。`,
+    summary: sendBlocked
+      ? `根据用户确认记录尝试发送给${payload.recipient}，但发送受阻：${asText(sendResult.reason)}。`
+      : (liveSent
+          ? `根据用户确认记录通过微信 iLink 发送给${payload.recipient}：「${draftText}」。`
+          : `根据用户确认记录模拟发送给${payload.recipient}：「${draftText}」。`),
   })
   appendCurrentMissionToolStage({
     toolName: 'messages.real-adapter',
     toolCallId,
     role: 'Operator',
-    status: 'skipped',
-    stage: 'confirmed-send-real-adapter-pending',
+    status: liveSent ? 'ok' : (sendBlocked ? 'blocked' : 'skipped'),
+    stage: liveSent ? 'confirmed-send-real-adapter' : (sendBlocked ? 'confirmed-send-real-adapter-blocked' : 'confirmed-send-real-adapter-pending'),
     url: payload.realAdapterEntry,
     planStepId: 'confirm-send',
-    summary: `真实${target.appName}发送适配器尚未接入；没有调用真实外部应用发送接口。`,
+    summary: liveSent
+      ? `真实${target.appName}发送适配器已在 External message 权限批准后调用。`
+      : (sendBlocked
+          ? `真实${target.appName}发送适配器调用受阻：${asText(sendResult.reason)}。`
+          : `真实${target.appName}发送适配器尚未启用；没有调用真实外部应用发送接口。`),
   })
   appendCurrentMissionArtifact({
     id: artifactId,
@@ -1805,7 +1825,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
   appendCurrentMissionReviewCheck({
     key: `external-message-send-${asText(mission.id, 'mission')}`,
     title: '外部发送复核',
-    outcome: 'passed',
+    outcome: sendBlocked ? 'blocked' : 'passed',
     reviewer: 'Vela Message Reviewer',
     planStepId: 'confirm-send',
     artifactId,
@@ -1817,14 +1837,23 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
       `发送对象：${payload.recipient}`,
       `发送内容：${draftText}`,
       ...desktopAdapterEvidence(payload),
+      ...(adapterAttempted ? wechatIlinkSendEvidence(sendResult) : []),
       '发送阶段发生在 External message 权限批准之后。',
-      '当前为模拟发送回执，未调用真实外部应用发送接口。',
+      liveSent ? '当前已调用微信 iLink sendText。' : '当前未调用真实外部应用发送接口。',
     ],
   })
+  if (sendBlocked) {
+    return updateCurrentMission({
+      state: canTransitionMission(mission.state, 'Blocked') ? 'Blocked' : mission.state,
+      nextStep: `发送受阻：${asText(sendResult.reason, '请检查微信 iLink 配置后重试。')}`,
+    })
+  }
   setCurrentMissionReview({
     outcome: 'passed',
     reviewer: 'Vela Message Reviewer',
-    summary: '外部消息发送链路已通过：先草拟，用户确认后发送，并记录发送回执。',
+    summary: liveSent
+      ? '外部消息发送链路已通过：先草拟，用户确认后通过微信 iLink 发送，并记录发送回执。'
+      : '外部消息发送链路已通过：先草拟，用户确认后发送，并记录发送回执。',
     evidence: [
       `Permission ${permission.id} approved.`,
       `Tool ${toolCallId} recorded after approval.`,
@@ -1834,7 +1863,7 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}) {
   return updateCurrentMission({
     state: 'Complete',
     plan: advanceExternalMessagePlanToSent(reviewedMission.plan),
-    nextStep: externalMessageSendReceiptSummary(reviewedMission),
+    nextStep: summary,
   })
 }
 
@@ -2481,7 +2510,9 @@ function resolveCurrentMissionPermissionWithOptions(options = {}, runtimeOptions
   })
   const written = writeCurrentMission(store, next)
   if (approved && !stillPending && isExternalMessageSendPermission(resolvedPermission)) {
-    return completeExternalMessageAfterApproval(written, resolvedPermission)
+    return completeExternalMessageAfterApproval(written, resolvedPermission, {
+      sendResult: runtimeOptions.externalMessageSendResult || null,
+    })
   }
   if (approved && !stillPending && isWechatIlinkLoginPermission(resolvedPermission)) {
     return completeWechatIlinkLoginAfterApproval(written, resolvedPermission, {
@@ -2507,6 +2538,7 @@ export async function resolveCurrentMissionPermissionWithAdapters(id, patch = {}
   const target = findPermissionResolveTarget(permissions, requestedId, current)
   const decision = normalizePermissionDecision(options.decision || options.status || options.result, target.decision)
   let wechatIlinkQrSession = null
+  let externalMessageSendResult = null
 
   if (decision === 'approved' && isWechatIlinkLoginPermission(target)) {
     const adapterDeps = options.wechatIlinkLoginDeps || options.wechatIlink || {}
@@ -2522,7 +2554,36 @@ export async function resolveCurrentMissionPermissionWithAdapters(id, patch = {}
     wechatIlinkQrSession = await startWechatIlinkQrLoginSession(qrSessionOptions)
   }
 
-  return resolveCurrentMissionPermissionWithOptions(options, { wechatIlinkQrSession })
+  if (decision === 'approved' && isExternalMessageSendPermission(target) && isExternalMessageMission(current)) {
+    const externalTarget = externalMessageDesktopTarget(current)
+    if (externalTarget.appUrl === 'app://wechat' || /微信|wechat/i.test(externalTarget.appName)) {
+      const payload = externalMessageDraftPayload(current)
+      const adapterDeps = options.wechatIlinkSendDeps || options.wechatIlink || {}
+      const sendOptions = {
+        ...adapterDeps,
+        text: payload.draftText,
+        env: adapterDeps.env || options.env || (typeof process === 'undefined' ? {} : process.env),
+      }
+      if (Object.prototype.hasOwnProperty.call(adapterDeps, 'recipientUserId')) {
+        sendOptions.recipientUserId = adapterDeps.recipientUserId
+      } else if (Object.prototype.hasOwnProperty.call(options, 'recipientUserId')) {
+        sendOptions.recipientUserId = options.recipientUserId
+      }
+      if (Object.prototype.hasOwnProperty.call(adapterDeps, 'allowSend')) {
+        sendOptions.allowSend = adapterDeps.allowSend
+      } else if (Object.prototype.hasOwnProperty.call(options, 'allowSend')) {
+        sendOptions.allowSend = options.allowSend
+      }
+      if (Object.prototype.hasOwnProperty.call(adapterDeps, 'allowNetwork')) {
+        sendOptions.allowNetwork = adapterDeps.allowNetwork
+      } else if (Object.prototype.hasOwnProperty.call(options, 'allowNetwork')) {
+        sendOptions.allowNetwork = options.allowNetwork
+      }
+      externalMessageSendResult = await sendWechatIlinkTextMessage(sendOptions)
+    }
+  }
+
+  return resolveCurrentMissionPermissionWithOptions(options, { wechatIlinkQrSession, externalMessageSendResult })
 }
 
 export function appendCurrentMissionRecoveryAction(input = {}) {

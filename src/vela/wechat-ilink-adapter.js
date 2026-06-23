@@ -13,6 +13,7 @@ const WECHAT_ILINK_ENV = {
   botType: 'VELA_WECHAT_ILINK_BOT_TYPE',
   routeTag: 'VELA_WECHAT_ILINK_ROUTE_TAG',
   enableRealLogin: 'VELA_WECHAT_ILINK_ENABLE_REAL_LOGIN',
+  enableRealSend: 'VELA_WECHAT_ILINK_ENABLE_REAL_SEND',
 }
 const DEFAULT_WECHAT_ILINK_CREDENTIALS_FILE = 'vela-wechat-ilink-credentials.json'
 const DEFAULT_WECHAT_ILINK_BOT_TYPE = '3'
@@ -52,6 +53,16 @@ function shouldAllowWechatIlinkNetwork(options = {}, env = {}) {
     return options.allowNetwork === true
   }
   return enabledFlag(envValue(env, WECHAT_ILINK_ENV.enableRealLogin))
+}
+
+function shouldAllowWechatIlinkSend(options = {}, env = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, 'allowSend')) {
+    return options.allowSend === true
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'allowNetwork')) {
+    return options.allowNetwork === true
+  }
+  return enabledFlag(envValue(env, WECHAT_ILINK_ENV.enableRealSend))
 }
 
 function resolveWechatIlinkPackage() {
@@ -212,6 +223,129 @@ export function wechatIlinkEvidence(preflight = {}) {
     `微信凭据存储：${asText(preflight.credentialStorePath)}`,
     `微信缺少凭据：${missingCredentials.length ? missingCredentials.join(', ') : 'none'}`,
     `微信收件人 ID 状态：${asText(preflight.recipientStatus, 'missing')}`,
+  ]
+}
+
+function normalizeWechatIlinkSendPayload(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
+  const credentials = readWechatIlinkCredentials({ ...options, env })
+  return {
+    text: asText(options.text || options.message || options.body || options.draftText),
+    recipientUserId: asText(options.recipientUserId || options.toUserId || options.to, credentials.defaultRecipientUserId),
+    contextToken: asText(options.contextToken),
+    credentials,
+  }
+}
+
+export async function sendWechatIlinkTextMessage(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
+  const payload = normalizeWechatIlinkSendPayload({ ...options, env })
+  const preflight = preflightWechatIlinkAdapter({
+    ...options,
+    env,
+    capability: 'messages.confirmed-send',
+    recipientUserId: payload.recipientUserId,
+  })
+  const realSendEnabled = shouldAllowWechatIlinkSend(options, env)
+  const base = {
+    adapterId: 'wechat-ilink',
+    action: 'wechat-ilink.messages.confirmed-send',
+    risk: 'External message',
+    packageAvailable: Boolean(preflight.packageAvailable),
+    packagePath: asText(preflight.packagePath),
+    credentialStatus: asText(preflight.credentialStatus, 'missing'),
+    credentialSource: asText(preflight.credentialSource, 'none'),
+    credentialStorePath: asText(preflight.credentialStorePath),
+    recipientStatus: asText(preflight.recipientStatus, 'missing'),
+    recipientUserId: payload.recipientUserId,
+    textLength: payload.text.length,
+    realSendEnabled,
+    executionMode: realSendEnabled ? 'live' : 'simulated',
+    status: realSendEnabled ? 'prepared' : 'simulated',
+    messageSent: false,
+    redactedCredentials: preflight.redactedCredentials || redactWechatIlinkCredentials(payload.credentials),
+    reason: realSendEnabled
+      ? '真实微信 iLink 发送已启用，等待调用 sendText。'
+      : `真实微信 iLink 发送未启用；设置 ${WECHAT_ILINK_ENV.enableRealSend}=1 或传入 allowSend=true 后才会调用 sendText。`,
+    nextAction: realSendEnabled ? 'send-text' : 'record-simulated-send-receipt',
+    createdAt: asText(options.createdAt, new Date().toISOString()),
+  }
+
+  if (!payload.text) {
+    return {
+      ...base,
+      status: 'blocked',
+      reason: '缺少待发送文本，未调用微信 iLink。',
+      nextAction: 'draft-message-before-send',
+    }
+  }
+
+  if (!preflight.available) {
+    return {
+      ...base,
+      executionMode: realSendEnabled ? 'live' : 'simulated',
+      status: 'blocked',
+      reason: preflight.missingConnector || '微信 iLink 发送预检未通过。',
+      nextAction: 'connect-wechat-ilink-or-configure-recipient',
+    }
+  }
+
+  if (!realSendEnabled) {
+    return {
+      ...base,
+      status: 'simulated',
+      reason: '已完成微信 iLink 发送预检；本次只记录模拟发送回执，没有调用真实微信接口。',
+    }
+  }
+
+  try {
+    const clientModule = options.clientModule || await import('wechat-ilink-client')
+    const WeChatClient = options.WeChatClient || clientModule.WeChatClient
+    if (typeof WeChatClient !== 'function' && !options.client) {
+      return {
+        ...base,
+        status: 'blocked',
+        reason: 'wechat-ilink-client 没有导出 WeChatClient，无法发送微信文本。',
+        nextAction: 'verify-wechat-ilink-client-package',
+      }
+    }
+    const client = options.client || new WeChatClient({
+      accountId: payload.credentials.accountId,
+      token: payload.credentials.token,
+      baseUrl: payload.credentials.baseUrl,
+      routeTag: envValue(env, WECHAT_ILINK_ENV.routeTag),
+    })
+    const receipt = await client.sendText(payload.recipientUserId, payload.text, payload.contextToken || undefined)
+    return {
+      ...base,
+      status: 'sent',
+      messageSent: true,
+      reason: '已通过微信 iLink sendText 发送文本消息。',
+      nextAction: 'record-live-send-receipt',
+      receipt: receipt && typeof receipt === 'object' ? {
+        type: asText(receipt.type || receipt.messageType || receipt.status, 'sendText'),
+      } : { type: 'sendText' },
+    }
+  } catch (err) {
+    return {
+      ...base,
+      status: 'failed',
+      reason: `微信 iLink 发送失败：${asText(err?.message, 'unknown error')}`,
+      nextAction: 'retry-after-user-review',
+    }
+  }
+}
+
+export function wechatIlinkSendEvidence(result = {}) {
+  return [
+    `微信发送状态：${asText(result.status, 'unknown')}`,
+    `微信发送模式：${asText(result.executionMode, 'simulated')}`,
+    `微信真实发送启用：${result.realSendEnabled ? 'yes' : 'no'}`,
+    `微信消息已发送：${result.messageSent ? 'yes' : 'no'}`,
+    `微信凭据状态：${asText(result.credentialStatus, 'missing')}`,
+    `微信凭据来源：${asText(result.credentialSource, 'none')}`,
+    `微信收件人 ID：${result.recipientUserId ? 'present' : 'none'}`,
+    `微信发送原因：${asText(result.reason)}`,
   ]
 }
 

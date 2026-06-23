@@ -54,6 +54,57 @@ try {
   assert(storedWechatPreflight.available === true, 'WeChat iLink preflight can use stored credentials')
   assert(storedWechatPreflight.credentialSource === 'local-store', 'WeChat iLink preflight records local credential source')
   assert(storedWechatPreflight.recipientStatus === 'configured', 'WeChat iLink preflight uses stored default recipient')
+  const dryWechatSend = await wechatIlinkAdapter.sendWechatIlinkTextMessage({
+    filePath: wechatCredentialFile,
+    text: '测试发送内容',
+    env: {},
+  })
+  assert(dryWechatSend.status === 'simulated', 'WeChat iLink send is simulated by default')
+  assert(dryWechatSend.messageSent === false, 'WeChat iLink simulated send does not send message')
+  assert(wechatIlinkAdapter.wechatIlinkSendEvidence(dryWechatSend).some(item => item.includes('微信消息已发送：no')), 'WeChat iLink send evidence records unsent state')
+  const missingWechatSendText = await wechatIlinkAdapter.sendWechatIlinkTextMessage({
+    filePath: wechatCredentialFile,
+    env: {},
+    allowSend: true,
+  })
+  assert(missingWechatSendText.status === 'blocked', 'WeChat iLink send requires message text')
+  let fakeWechatSendOpts = null
+  let fakeWechatSendCall = null
+  const liveWechatSend = await wechatIlinkAdapter.sendWechatIlinkTextMessage({
+    filePath: wechatCredentialFile,
+    text: '真实发送测试',
+    contextToken: 'ctx-send-1',
+    allowSend: true,
+    clientModule: {
+      WeChatClient: class {
+        constructor(opts) {
+          fakeWechatSendOpts = opts
+        }
+
+        async sendText(to, text, contextToken) {
+          fakeWechatSendCall = { to, text, contextToken }
+          return { status: 'ok' }
+        }
+      },
+    },
+    env: {},
+  })
+  assert(liveWechatSend.status === 'sent', 'WeChat iLink live send records sent status')
+  assert(liveWechatSend.messageSent === true, 'WeChat iLink live send marks message sent')
+  assert(fakeWechatSendOpts.token === 'test-token-1234567890', 'WeChat iLink live send passes token to client only')
+  assert(fakeWechatSendOpts.accountId === 'test-account-1234567890', 'WeChat iLink live send passes account id to client')
+  assert(fakeWechatSendCall.to === 'wife-user-123456', 'WeChat iLink live send uses stored default recipient')
+  assert(fakeWechatSendCall.text === '真实发送测试', 'WeChat iLink live send passes approved text')
+  assert(fakeWechatSendCall.contextToken === 'ctx-send-1', 'WeChat iLink live send passes context token')
+  assert(!wechatIlinkAdapter.wechatIlinkSendEvidence(liveWechatSend).join('\n').includes('test-token-1234567890'), 'WeChat iLink send evidence does not expose raw token')
+  const missingWechatSendClient = await wechatIlinkAdapter.sendWechatIlinkTextMessage({
+    filePath: wechatCredentialFile,
+    text: '真实发送测试',
+    allowSend: true,
+    clientModule: {},
+    env: {},
+  })
+  assert(missingWechatSendClient.status === 'blocked', 'WeChat iLink live send blocks when WeChatClient export is missing')
   const loginRequest = wechatIlinkAdapter.prepareWechatIlinkLoginRequest({ filePath: wechatCredentialFile })
   assert(loginRequest.risk === 'Credential', 'WeChat iLink login request is credential-gated')
   assert(loginRequest.guardrail.includes('必须分别经过用户确认'), 'WeChat iLink login request records separate confirmations')
@@ -2146,6 +2197,43 @@ try {
   assert(outboundSendStages.some(item => item.toolName === 'messages.real-adapter' && item.result === 'skipped'), 'external message approval records skipped real-adapter send stage')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('发送对象：老婆'))), 'external message approval keeps recipient evidence')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('真实适配器入口：desktop://adapters/wechat/messages.confirmed-send'))), 'external message approval keeps real adapter evidence')
+  runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  let liveExternalWechatSendOpts = null
+  let liveExternalWechatSendCall = null
+  const assistantLiveWechatSent = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '可以',
+    source: 'test-command',
+    wechatIlinkSendDeps: {
+      allowSend: true,
+      filePath: wechatCredentialFile,
+      clientModule: {
+        WeChatClient: class {
+          constructor(opts) {
+            liveExternalWechatSendOpts = opts
+          }
+
+          async sendText(to, text, contextToken) {
+            liveExternalWechatSendCall = { to, text, contextToken }
+            return { status: 'ok' }
+          }
+        },
+      },
+    },
+  })
+  assert(assistantLiveWechatSent.state === 'Complete', 'external message live WeChat send completes mission')
+  assert(liveExternalWechatSendOpts.token === 'runtime-confirmed-token-888', 'external message live WeChat send passes stored token to client only')
+  assert(liveExternalWechatSendCall.to === 'runtime-default-user', 'external message live WeChat send uses saved default recipient')
+  assert(liveExternalWechatSendCall.text === '收到，我晚点跟你说。', 'external message live WeChat send sends approved draft text')
+  assert(assistantLiveWechatSent.nextStep.includes('通过微信 iLink 发送'), 'external message live WeChat send reports live iLink send')
+  assert(assistantLiveWechatSent.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息已发送：yes'))), 'external message live WeChat send records send evidence')
+  const liveOutboundSendTool = assistantLiveWechatSent.toolCalls.find(item => item.toolName === 'messages.outbound.send')
+  const liveOutboundStages = assistantLiveWechatSent.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === liveOutboundSendTool?.id)
+  assert(liveOutboundStages.some(item => item.toolName === 'messages.real-adapter' && item.result === 'ok'), 'external message live WeChat send records real adapter stage')
+  assert(!JSON.stringify(assistantLiveWechatSent).includes('runtime-confirmed-token-888'), 'external message live WeChat send does not persist raw token in mission state')
 
   const chineseCommandMission = runtime.applyCurrentMissionCommand({ text: '开始 中文命令任务', source: 'test-command' })
   assert(chineseCommandMission.title === '中文命令任务', 'Chinese start command creates a named mission')
