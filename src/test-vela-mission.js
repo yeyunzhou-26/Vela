@@ -2234,6 +2234,7 @@ try {
   assert(assistantDraft.permissions.at(-1).scope.includes(encodeURIComponent('老婆')), 'external message permission scopes the recipient')
   assert(assistantDraft.permissions.at(-1).reason.includes('用户明确确认前不发送'), 'external message permission records send guardrail')
   assert(assistantDraft.permissions.at(-1).reason.includes('真实适配器入口：desktop://adapters/wechat/messages.confirmed-send'), 'external message permission records real adapter entrypoint')
+  const assistantDraftSendPermissionId = assistantDraft.permissions.at(-1).id
   assert(assistantDraft.agentActions.at(-1).title === '草拟待确认回复', 'external message continue records the draft action')
   assert(assistantDraft.toolCalls.some(item => item.toolName === 'desktop.app-control.inspect'), 'external message continue records desktop context inspection')
   assert(assistantDraft.artifacts.some(item => item.title === '微信上下文摘要'), 'external message continue creates desktop context artifact')
@@ -2262,6 +2263,13 @@ try {
   assert(outboundSendStages.some(item => item.toolName === 'messages.real-adapter' && item.result === 'skipped'), 'external message approval records skipped real-adapter send stage')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('发送对象：老婆'))), 'external message approval keeps recipient evidence')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('真实适配器入口：desktop://adapters/wechat/messages.confirmed-send'))), 'external message approval keeps real adapter evidence')
+  const assistantDraftRepeatedApproval = runtime.resolveCurrentMissionPermission(assistantDraftSendPermissionId, {
+    decision: 'approved',
+    approvedBy: 'Retry',
+  })
+  assert(assistantDraftRepeatedApproval.state === 'Complete', 'external message repeated approval keeps completed mission')
+  assert(assistantDraftRepeatedApproval.toolCalls.filter(item => item.toolName === 'messages.outbound.send').length === 1, 'external message repeated approval does not record another outbound send')
+  assert(assistantDraftRepeatedApproval.artifacts.filter(item => item.kind === 'send-receipt').length === 1, 'external message repeated approval does not record another send receipt')
 
   runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
@@ -2401,9 +2409,11 @@ try {
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
   })
-  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const assistantLiveWechatDraft = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const assistantLiveWechatPermissionId = assistantLiveWechatDraft.permissions.at(-1).id
   let liveExternalWechatSendOpts = null
   let liveExternalWechatSendCall = null
+  let liveExternalWechatSendCalls = 0
   const assistantLiveWechatSent = await runtime.applyCurrentMissionCommandWithAdapters({
     text: '可以',
     source: 'test-command',
@@ -2417,6 +2427,7 @@ try {
           }
 
           async sendText(to, text, contextToken) {
+            liveExternalWechatSendCalls += 1
             liveExternalWechatSendCall = { to, text, contextToken }
             return { status: 'ok' }
           }
@@ -2428,12 +2439,31 @@ try {
   assert(liveExternalWechatSendOpts.token === 'runtime-confirmed-token-888', 'external message live WeChat send passes stored token to client only')
   assert(liveExternalWechatSendCall.to === 'runtime-default-user', 'external message live WeChat send uses saved default recipient')
   assert(liveExternalWechatSendCall.text === '收到，我晚点跟你说。', 'external message live WeChat send sends approved draft text')
+  assert(liveExternalWechatSendCalls === 1, 'external message live WeChat send calls adapter once')
   assert(assistantLiveWechatSent.nextStep.includes('通过微信 iLink 发送'), 'external message live WeChat send reports live iLink send')
   assert(assistantLiveWechatSent.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息已发送：yes'))), 'external message live WeChat send records send evidence')
   const liveOutboundSendTool = assistantLiveWechatSent.toolCalls.find(item => item.toolName === 'messages.outbound.send')
   const liveOutboundStages = assistantLiveWechatSent.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === liveOutboundSendTool?.id)
   assert(liveOutboundStages.some(item => item.toolName === 'messages.real-adapter' && item.result === 'ok'), 'external message live WeChat send records real adapter stage')
   assert(!JSON.stringify(assistantLiveWechatSent).includes('runtime-confirmed-token-888'), 'external message live WeChat send does not persist raw token in mission state')
+  const assistantLiveWechatRepeatedApproval = await runtime.resolveCurrentMissionPermissionWithAdapters(assistantLiveWechatPermissionId, {
+    decision: 'approved',
+    approvedBy: 'Retry',
+    wechatIlinkSendDeps: {
+      allowSend: true,
+      filePath: wechatCredentialFile,
+      clientModule: {
+        WeChatClient: class {
+          async sendText() {
+            liveExternalWechatSendCalls += 1
+            return { status: 'ok' }
+          }
+        },
+      },
+    },
+  })
+  assert(liveExternalWechatSendCalls === 1, 'external message repeated live approval does not call adapter again')
+  assert(assistantLiveWechatRepeatedApproval.toolCalls.filter(item => item.toolName === 'messages.outbound.send').length === 1, 'external message repeated live approval does not record another outbound send')
 
   const chineseCommandMission = runtime.applyCurrentMissionCommand({ text: '开始 中文命令任务', source: 'test-command' })
   assert(chineseCommandMission.title === '中文命令任务', 'Chinese start command creates a named mission')

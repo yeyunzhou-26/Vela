@@ -2600,6 +2600,7 @@ function resolveCurrentMissionPermissionWithOptions(options = {}, runtimeOptions
   const requestedId = asText(options.id || options.permissionId)
   const target = findPermissionResolveTarget(permissions, requestedId, current)
   if (!isPendingPermissionDecision(target.decision)) {
+    if (requestedId) return current
     throw new MissionRuntimeError(`Permission already resolved: ${target.decision}`, 'permission_not_pending', { mission: current })
   }
 
@@ -2678,6 +2679,9 @@ export async function resolveCurrentMissionPermissionWithAdapters(id, patch = {}
   const permissions = normalizeArray(current.permissions)
   const requestedId = asText(options.id || options.permissionId)
   const target = findPermissionResolveTarget(permissions, requestedId, current)
+  if (!isPendingPermissionDecision(target.decision)) {
+    return resolveCurrentMissionPermissionWithOptions(options)
+  }
   const decision = normalizePermissionDecision(options.decision || options.status || options.result, target.decision)
   let wechatIlinkQrSession = null
   let externalMessageSendResult = null
