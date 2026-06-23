@@ -57,6 +57,63 @@ try {
   const loginRequest = wechatIlinkAdapter.prepareWechatIlinkLoginRequest({ filePath: wechatCredentialFile })
   assert(loginRequest.risk === 'Credential', 'WeChat iLink login request is credential-gated')
   assert(loginRequest.guardrail.includes('必须分别经过用户确认'), 'WeChat iLink login request records separate confirmations')
+  assert(loginRequest.realQrLoginEnabled === false, 'WeChat iLink login request keeps real QR network disabled by default')
+  const dryWechatQrSession = await wechatIlinkAdapter.startWechatIlinkQrLoginSession({
+    filePath: wechatCredentialFile,
+    env: {},
+    createdAt: '2026-06-23T00:00:00.000Z',
+  })
+  assert(dryWechatQrSession.status === 'waiting-for-network-enable', 'WeChat iLink QR session does not call network by default')
+  assert(dryWechatQrSession.executionMode === 'simulated', 'WeChat iLink QR session is simulated until explicitly enabled')
+  assert(dryWechatQrSession.tokenSaved === false, 'WeChat iLink QR session does not save credentials')
+  assert(dryWechatQrSession.messageSent === false, 'WeChat iLink QR session does not send messages')
+  assert(wechatIlinkAdapter.wechatIlinkQrSessionEvidence(dryWechatQrSession).some(item => item.includes('二维码请求已启用：no')), 'WeChat iLink QR evidence records disabled network')
+  let fakeQrBotType = ''
+  let fakeQrBaseUrl = ''
+  let fakeQrRouteTag = ''
+  const liveWechatQrSession = await wechatIlinkAdapter.startWechatIlinkQrLoginSession({
+    filePath: wechatCredentialFile,
+    env: {
+      VELA_WECHAT_ILINK_ENABLE_REAL_LOGIN: '1',
+      VELA_WECHAT_ILINK_BOT_TYPE: '9',
+      VELA_WECHAT_ILINK_BASE_URL: 'https://ilink.example.test',
+      VELA_WECHAT_ILINK_ROUTE_TAG: 'vela-test-route',
+    },
+    clientModule: {
+      ApiClient: class {
+        constructor(opts = {}) {
+          fakeQrBaseUrl = opts.baseUrl
+          fakeQrRouteTag = opts.routeTag
+        }
+
+        async getQRCode(botType) {
+          fakeQrBotType = botType
+          return {
+            qrcode: 'qr-session-123',
+            qrcode_img_content: 'https://qr.example.test/session-123',
+          }
+        }
+      },
+    },
+    createdAt: '2026-06-23T00:00:00.000Z',
+  })
+  assert(liveWechatQrSession.status === 'qr-ready', 'WeChat iLink QR session can produce a QR URL through ApiClient')
+  assert(liveWechatQrSession.executionMode === 'live', 'WeChat iLink QR session records live mode when enabled')
+  assert(liveWechatQrSession.qrCodeId === 'qr-session-123', 'WeChat iLink QR session records QR id')
+  assert(liveWechatQrSession.qrCodeUrl === 'https://qr.example.test/session-123', 'WeChat iLink QR session records QR URL')
+  assert(fakeQrBotType === '9', 'WeChat iLink QR session forwards bot type')
+  assert(fakeQrBaseUrl === 'https://ilink.example.test', 'WeChat iLink QR session forwards base URL')
+  assert(fakeQrRouteTag === 'vela-test-route', 'WeChat iLink QR session forwards route tag')
+  assert(liveWechatQrSession.tokenSaved === false, 'WeChat iLink QR URL generation still does not save credentials')
+  assert(liveWechatQrSession.messageSent === false, 'WeChat iLink QR URL generation still does not send messages')
+  assert(wechatIlinkAdapter.wechatIlinkQrSessionEvidence(liveWechatQrSession).some(item => item.includes('二维码状态：qr-ready')), 'WeChat iLink QR evidence records ready status')
+  const missingQrApiSession = await wechatIlinkAdapter.startWechatIlinkQrLoginSession({
+    allowNetwork: true,
+    clientModule: {},
+    env: {},
+  })
+  assert(missingQrApiSession.status === 'blocked', 'WeChat iLink QR session blocks when ApiClient export is missing')
+  assert(missingQrApiSession.reason.includes('ApiClient'), 'WeChat iLink QR missing API session explains missing ApiClient')
   wechatIlinkAdapter.removeWechatIlinkCredentials({ filePath: wechatCredentialFile })
   assert(!fs.existsSync(wechatCredentialFile), 'WeChat iLink credential removal deletes local store')
 

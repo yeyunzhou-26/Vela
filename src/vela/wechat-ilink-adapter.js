@@ -10,8 +10,12 @@ const WECHAT_ILINK_ENV = {
   accountId: 'VELA_WECHAT_ILINK_ACCOUNT_ID',
   baseUrl: 'VELA_WECHAT_ILINK_BASE_URL',
   defaultRecipientUserId: 'VELA_WECHAT_ILINK_DEFAULT_TO_USER_ID',
+  botType: 'VELA_WECHAT_ILINK_BOT_TYPE',
+  routeTag: 'VELA_WECHAT_ILINK_ROUTE_TAG',
+  enableRealLogin: 'VELA_WECHAT_ILINK_ENABLE_REAL_LOGIN',
 }
 const DEFAULT_WECHAT_ILINK_CREDENTIALS_FILE = 'vela-wechat-ilink-credentials.json'
+const DEFAULT_WECHAT_ILINK_BOT_TYPE = '3'
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
@@ -37,6 +41,17 @@ function redactSecret(value = '') {
   if (!text) return ''
   if (text.length <= 8) return `${text.slice(0, 2)}...`
   return `${text.slice(0, 4)}...${text.slice(-4)}`
+}
+
+function enabledFlag(value) {
+  return /^(1|true|yes|on|live|enabled)$/i.test(asText(value))
+}
+
+function shouldAllowWechatIlinkNetwork(options = {}, env = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, 'allowNetwork')) {
+    return options.allowNetwork === true
+  }
+  return enabledFlag(envValue(env, WECHAT_ILINK_ENV.enableRealLogin))
 }
 
 function resolveWechatIlinkPackage() {
@@ -201,8 +216,10 @@ export function wechatIlinkEvidence(preflight = {}) {
 }
 
 export function prepareWechatIlinkLoginRequest(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
   const credentialStorePath = asText(options.filePath, wechatIlinkCredentialStorePath(options))
   const packagePath = resolveWechatIlinkPackage()
+  const realQrLoginEnabled = shouldAllowWechatIlinkNetwork(options, env)
   return {
     adapterId: 'wechat-ilink',
     action: 'wechat-ilink.qr-login.prepare',
@@ -210,8 +227,128 @@ export function prepareWechatIlinkLoginRequest(options = {}) {
     packageAvailable: Boolean(packagePath),
     packagePath,
     credentialStorePath,
+    botType: asText(options.botType, envValue(env, WECHAT_ILINK_ENV.botType, DEFAULT_WECHAT_ILINK_BOT_TYPE)),
+    baseUrl: asText(options.baseUrl, envValue(env, WECHAT_ILINK_ENV.baseUrl, 'https://ilinkai.weixin.qq.com')),
+    realQrLoginEnabled,
     summary: '准备微信 iLink 扫码登录：只生成登录准备和凭据保存位置，不自动发起扫码、不保存凭据、不发送消息。',
     guardrail: '扫码登录、保存 token/accountId、发送消息都必须分别经过用户确认。',
     requiredCredentialFields: ['botToken', 'accountId', 'baseUrl'],
   }
+}
+
+function normalizeQrCodeResponse(value = {}) {
+  return {
+    qrCodeId: asText(value.qrcode || value.qrCode || value.qrCodeId || value.id),
+    qrCodeUrl: asText(value.qrcode_img_content || value.qrcodeUrl || value.qrCodeUrl || value.url),
+  }
+}
+
+function qrSessionBase(request = {}, patch = {}) {
+  const now = asText(patch.createdAt, new Date().toISOString())
+  return {
+    adapterId: 'wechat-ilink',
+    action: 'wechat-ilink.qr-login.start',
+    risk: 'Credential',
+    packageAvailable: Boolean(request.packageAvailable),
+    packagePath: asText(request.packagePath),
+    credentialStorePath: asText(request.credentialStorePath),
+    botType: asText(request.botType, DEFAULT_WECHAT_ILINK_BOT_TYPE),
+    baseUrl: asText(request.baseUrl, 'https://ilinkai.weixin.qq.com'),
+    realQrLoginEnabled: request.realQrLoginEnabled === true,
+    executionMode: 'simulated',
+    status: 'waiting-for-network-enable',
+    qrCodeId: '',
+    qrCodeUrl: '',
+    tokenSaved: false,
+    messageSent: false,
+    guardrail: asText(request.guardrail),
+    reason: '真实二维码网络请求未启用。',
+    nextAction: 'enable-real-login-after-user-confirmation',
+    createdAt: now,
+    ...patch,
+  }
+}
+
+export async function startWechatIlinkQrLoginSession(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
+  const request = prepareWechatIlinkLoginRequest({ ...options, env })
+  const base = qrSessionBase(request, {
+    createdAt: asText(options.createdAt, new Date().toISOString()),
+  })
+
+  if (!request.packageAvailable) {
+    return {
+      ...base,
+      executionMode: 'unavailable',
+      status: 'blocked',
+      reason: '未安装 wechat-ilink-client，无法请求微信登录二维码。',
+      nextAction: 'install-wechat-ilink-client',
+    }
+  }
+
+  if (!request.realQrLoginEnabled) {
+    return {
+      ...base,
+      reason: `真实二维码网络请求未启用；设置 ${WECHAT_ILINK_ENV.enableRealLogin}=1 或传入 allowNetwork=true 后才会调用 ApiClient.getQRCode。`,
+    }
+  }
+
+  try {
+    const clientModule = options.clientModule || await import('wechat-ilink-client')
+    const ApiClient = options.ApiClient || clientModule.ApiClient
+    if (typeof ApiClient !== 'function' && !options.apiClient) {
+      return {
+        ...base,
+        executionMode: 'live',
+        status: 'blocked',
+        reason: 'wechat-ilink-client 没有导出 ApiClient，无法请求二维码。',
+        nextAction: 'verify-wechat-ilink-client-package',
+      }
+    }
+    const api = options.apiClient || new ApiClient({
+      baseUrl: request.baseUrl,
+      routeTag: envValue(env, WECHAT_ILINK_ENV.routeTag),
+    })
+    const rawQr = await api.getQRCode(request.botType)
+    const qr = normalizeQrCodeResponse(rawQr)
+    if (!qr.qrCodeId || !qr.qrCodeUrl) {
+      return {
+        ...base,
+        executionMode: 'live',
+        status: 'failed',
+        reason: '微信 iLink 返回的二维码响应缺少 qrcode 或 qrcode_img_content。',
+        nextAction: 'retry-qr-login',
+      }
+    }
+    return {
+      ...base,
+      executionMode: 'live',
+      status: 'qr-ready',
+      qrCodeId: qr.qrCodeId,
+      qrCodeUrl: qr.qrCodeUrl,
+      reason: '二维码 URL 已生成；未轮询扫码状态，未保存 token/accountId，未发送消息。',
+      nextAction: 'display-qr-code',
+    }
+  } catch (err) {
+    return {
+      ...base,
+      executionMode: 'live',
+      status: 'failed',
+      reason: `请求微信登录二维码失败：${asText(err?.message, 'unknown error')}`,
+      nextAction: 'retry-qr-login',
+    }
+  }
+}
+
+export function wechatIlinkQrSessionEvidence(session = {}) {
+  return [
+    `二维码状态：${asText(session.status, 'unknown')}`,
+    `二维码执行模式：${asText(session.executionMode, 'simulated')}`,
+    `二维码请求已启用：${session.realQrLoginEnabled ? 'yes' : 'no'}`,
+    `二维码 ID：${session.qrCodeId ? 'present' : 'none'}`,
+    `二维码 URL：${session.qrCodeUrl ? 'present' : 'none'}`,
+    `凭据保存：${session.tokenSaved ? 'yes' : 'no'}`,
+    `消息发送：${session.messageSent ? 'yes' : 'no'}`,
+    `下一步：${asText(session.nextAction)}`,
+  ]
 }
