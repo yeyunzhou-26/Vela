@@ -100,6 +100,7 @@ const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回
 const WECHAT_ILINK_LOGIN_RE = /(?:(?:wechat|weixin|微信).*(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)|(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码).*(?:wechat|weixin|微信)|ilink)/i
 const WECHAT_QR_SCAN_STATUS_RE = /(?:扫码|二维码|我扫了|已扫|扫好了|扫完了|好了|scan|scanned|qr|login done)/i
 const APP_CONTEXT_FOLLOWUP_RE = /(?:(?:看看|看一下|查看|读一下|读取|检查|帮我看|帮我读).*(?:最近消息|消息|聊天|对话|上下文|当前状态)|(?:最近消息|聊天记录|对话上下文|当前对话|current chat|recent messages|read messages|check messages))/i
+const DRAFT_REPLY_FOLLOWUP_RE = /(?:(?:帮我|替我|给我)?(?:草拟|拟|写|想|生成|准备).*(?:回复|回信|回个|消息)|(?:帮我回复|替我回复|怎么回|如何回复|回什么|回复一下|回一下|draft reply|write reply))/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
@@ -795,9 +796,15 @@ function normalizeScreenContext(value = {}) {
 function normalizeArtifactMetadata(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return Object.fromEntries(Object.entries(value)
-    .map(([key, metadataValue]) => [asText(key), metadataValue])
+    .map(([key, metadataValue]) => {
+      if (Array.isArray(metadataValue)) {
+        return [asText(key), metadataValue.filter(item => ['string', 'number', 'boolean'].includes(typeof item))]
+      }
+      return [asText(key), metadataValue]
+    })
     .filter(([key, metadataValue]) => {
       if (!key) return false
+      if (Array.isArray(metadataValue)) return metadataValue.length > 0
       return ['string', 'number', 'boolean'].includes(typeof metadataValue)
     }))
 }
@@ -1566,6 +1573,10 @@ function isAppContextFollowupIntent(text = '') {
   return APP_CONTEXT_FOLLOWUP_RE.test(asText(text))
 }
 
+function isReplyDraftFollowupIntent(text = '') {
+  return DRAFT_REPLY_FOLLOWUP_RE.test(asText(text))
+}
+
 function isDesktopAppControlMission(mission = {}) {
   const sourceText = missionConversationText(mission)
   return normalizeArray(mission.capabilityReferences).some(item => item?.id === 'desktop.app-control')
@@ -1575,6 +1586,10 @@ function isDesktopAppControlMission(mission = {}) {
 
 function isDesktopAppContextFollowup(mission = {}, text = '') {
   return isAppContextFollowupIntent(text) && isDesktopAppControlMission(mission)
+}
+
+function isDesktopAppReplyDraftFollowup(mission = {}, text = '') {
+  return isReplyDraftFollowupIntent(text) && isDesktopAppControlMission(mission)
 }
 
 function desktopAppContextTarget(mission = {}) {
@@ -1592,6 +1607,39 @@ async function readWechatContextForDesktopApp(mission = {}, input = {}) {
   const target = desktopAppContextTarget(mission)
   if (target.appUrl !== 'app://wechat' && !/微信|wechat/i.test(target.appName)) return null
   return readWechatIlinkRecentMessages(makeWechatIlinkReadOptions(input))
+}
+
+function externalMessagePlanForDesktopReplyFollowup() {
+  return PERSONAL_ASSISTANT_MESSAGE_PLAN.map(step => {
+    if (step.id === 'understand-request' || step.id === 'inspect-context') return { ...step, status: 'Done' }
+    if (step.id === 'draft-reply') return { ...step, status: 'Active' }
+    return { ...step, status: 'Next' }
+  })
+}
+
+function desktopReplyFollowupCapabilityReferences(mission = {}, text = '') {
+  const target = desktopAppContextTarget(mission)
+  const candidates = [
+    ...normalizeArray(mission.capabilityReferences),
+    ...findOpenCapabilitiesForText(`${target.appName} ${text} 回复消息`),
+  ]
+  const byId = new Map()
+  for (const item of normalizeCapabilityReferences(candidates)) {
+    if (!byId.has(item.id)) byId.set(item.id, item)
+  }
+  return [...byId.values()]
+}
+
+function advanceDesktopAppReplyDraftFollowupByCommand(current = {}, input = {}, text = '') {
+  appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+  const missionWithInput = getCurrentMission()
+  updateCurrentMission({
+    state: canTransitionMission(missionWithInput.state, 'Running') ? 'Running' : missionWithInput.state,
+    plan: externalMessagePlanForDesktopReplyFollowup(),
+    capabilityReferences: desktopReplyFollowupCapabilityReferences(missionWithInput, text),
+    nextStep: '我来根据刚才看到的上下文草拟回复，发送前会再问你。',
+  })
+  return advanceExternalMessageMissionByCommand(getCurrentMission(), input, text)
 }
 
 function isExternalMessageMission(mission = {}) {
@@ -1636,6 +1684,10 @@ function draftExternalMessageText(mission = {}) {
   const override = externalMessageDraftOverride(mission)
   if (override) return override
   const sourceText = externalMessageSourceText(mission)
+  const latestContextText = latestStoredWechatContextTexts(mission)[0] || ''
+  if (/(几点|什么时候|多久|回家|到家|回来|回去)/.test(latestContextText)) return '收到，我晚点跟你说。'
+  if (/(买|带|牛奶|咖啡|菜|药|东西)/.test(latestContextText)) return '好，我记得。'
+  if (/(楼下|门口|到了|到啦|等你)/.test(latestContextText)) return '我马上到。'
   if (/(老婆|妻子|太太|媳妇)/.test(sourceText)) return '收到，我晚点跟你说。'
   if (/(老公|先生)/.test(sourceText)) return '收到，我晚点跟你说。'
   return '收到，我看到了，稍后回复你。'
@@ -1693,6 +1745,13 @@ function wechatContextMessageSummary(contextResult = {}) {
   return `最近消息：${texts.map(text => `「${text}」`).join('；')}`
 }
 
+function wechatContextMessageTexts(contextResult = {}) {
+  return normalizeArray(contextResult.messages)
+    .map(message => asText(message?.text))
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
 function latestWechatContextToken(contextResult = {}) {
   return normalizeArray(contextResult.messages)
     .map(message => asText(message?.contextToken))
@@ -1705,6 +1764,16 @@ function latestStoredWechatContextToken(mission = {}) {
     if (token) return token
   }
   return ''
+}
+
+function latestStoredWechatContextTexts(mission = {}) {
+  for (const artifact of [...normalizeArray(mission.artifacts)].reverse()) {
+    const texts = normalizeArray(artifact?.metadata?.messageTexts)
+      .map(text => asText(text))
+      .filter(Boolean)
+    if (texts.length) return texts
+  }
+  return []
 }
 
 function makeWechatIlinkReadOptions(input = {}) {
@@ -1821,6 +1890,7 @@ function appendExternalMessageDesktopContext(mission = {}, options = {}) {
       adapterId: 'wechat-ilink',
       contextStatus: asText(contextResult.status),
       messageCount: Number(contextResult.messageCount || 0),
+      messageTexts: wechatContextMessageTexts(contextResult),
       contextToken: latestWechatContextToken(contextResult),
       syncBuf: asText(contextResult.syncBuf),
     } : {},
@@ -1926,6 +1996,7 @@ function appendDesktopAppContextFollowup(mission = {}, options = {}) {
       adapterId: 'wechat-ilink',
       contextStatus: asText(contextResult.status),
       messageCount: Number(contextResult.messageCount || 0),
+      messageTexts: wechatContextMessageTexts(contextResult),
       contextToken: latestWechatContextToken(contextResult),
       syncBuf: asText(contextResult.syncBuf),
     } : {},
@@ -3234,6 +3305,9 @@ export async function applyCurrentMissionCommandWithAdapters(input = {}) {
   const isContinue = COMMAND_CONTINUE_RE.test(text)
   if (!capabilityAdapterResult) {
     const current = getCurrentMission()
+    if (!isContinue && isDesktopAppReplyDraftFollowup(current, text)) {
+      return advanceDesktopAppReplyDraftFollowupByCommand(current, input, text)
+    }
     if (!isContinue && isDesktopAppContextFollowup(current, text)) {
       const contextResult = await readWechatContextForDesktopApp(current, input)
       appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })

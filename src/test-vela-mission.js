@@ -2076,6 +2076,42 @@ try {
   const desktopFollowupStages = desktopContextFollowup.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === desktopFollowupToolId)
   assert(desktopFollowupStages.some(item => item.toolName === 'wechat-ilink.messages.read-recent'), 'desktop follow-up records WeChat recent read stage')
   assert(desktopFollowupStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'desktop follow-up records skipped external effect')
+  const desktopReplyDraft = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '帮我草拟回复',
+    source: 'test-command',
+  })
+  assert(desktopReplyDraft.id === desktopCommandReviewing.id, 'desktop reply draft keeps the current app mission')
+  assert(desktopReplyDraft.state === 'Waiting for permission', 'desktop reply draft waits for send confirmation')
+  assert(desktopReplyDraft.plan.find(item => item.id === 'confirm-send')?.status === 'Active', 'desktop reply draft activates send confirmation step')
+  assert(desktopReplyDraft.artifacts.at(-1).title === '拟发送内容', 'desktop reply draft creates draft artifact')
+  assert(desktopReplyDraft.artifacts.at(-1).summary.includes('收到，我晚点跟你说。'), 'desktop reply draft uses recent message context')
+  assert(desktopReplyDraft.permissions.at(-1).risk === 'External message', 'desktop reply draft requests external message permission')
+  assert(desktopReplyDraft.permissions.at(-1).toolCallId === 'external.message.send', 'desktop reply draft scopes send permission')
+  assert(desktopReplyDraft.capabilityReferences.some(item => item.riskClasses.includes('External message')), 'desktop reply draft adds outbound message capability')
+  assert(!desktopReplyDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'desktop reply draft does not send before approval')
+  let desktopFollowupSendCall = null
+  const desktopReplySent = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '可以',
+    source: 'test-command',
+    wechatIlinkSendDeps: {
+      allowSend: true,
+      filePath: desktopFollowupCredentialFile,
+      clientModule: {
+        WeChatClient: class {
+          async sendText(to, text, contextToken) {
+            desktopFollowupSendCall = { to, text, contextToken }
+            return { status: 'ok' }
+          }
+        },
+      },
+      env: {},
+    },
+  })
+  assert(desktopReplySent.state === 'Complete', 'desktop reply approval completes the app mission')
+  assert(desktopFollowupSendCall.to === 'wife-followup-user', 'desktop reply approval uses follow-up recipient')
+  assert(desktopFollowupSendCall.text === '收到，我晚点跟你说。', 'desktop reply approval sends the drafted text')
+  assert(desktopFollowupSendCall.contextToken === 'ctx-followup-read', 'desktop reply approval reuses follow-up context token')
+  assert(desktopReplySent.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息已发送：yes'))), 'desktop reply approval records live send evidence')
 
   const wechatLoginMission = runtime.applyCurrentMissionCommand({
     text: '连接微信',
