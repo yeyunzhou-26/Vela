@@ -2290,6 +2290,17 @@ try {
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
   })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const assistantDraftDenied = runtime.applyCurrentMissionCommand({ text: '别发', source: 'test-command' })
+  assert(assistantDraftDenied.state === 'Waiting for user', 'external message denied send waits for user instead of blocking')
+  assert(assistantDraftDenied.nextStep.includes('不会发送'), 'external message denied send explains nothing was sent')
+  assert(assistantDraftDenied.permissions.at(-1).decision === 'denied', 'external message denied send records denied permission')
+  assert(!assistantDraftDenied.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message denied send does not record outbound send')
+
+  runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
   let runtimeWechatReadOpts = null
   let runtimeWechatReadTimeout = null
   const assistantWechatContextDraft = await runtime.applyCurrentMissionCommandWithAdapters({

@@ -109,7 +109,7 @@ const STATE_TRANSITIONS = {
   Planned: ['Running', 'Waiting for user', 'Waiting for permission', 'Blocked', 'Failed'],
   Running: ['Waiting for user', 'Waiting for permission', 'Blocked', 'Reviewing', 'Complete', 'Failed'],
   'Waiting for user': ['Running', 'Blocked', 'Failed'],
-  'Waiting for permission': ['Running', 'Blocked', 'Failed'],
+  'Waiting for permission': ['Running', 'Waiting for user', 'Blocked', 'Failed'],
   Blocked: ['Running', 'Waiting for user', 'Failed'],
   Reviewing: ['Running', 'Complete', 'Failed'],
   Complete: ['Running'],
@@ -2710,6 +2710,9 @@ function resolveCurrentMissionPermissionWithOptions(options = {}, runtimeOptions
     if (approved && !stillPending && canTransitionMission(current.state, 'Running')) {
       nextState = 'Running'
       nextStep = asText(options.nextStep, `Approved: ${target.action}. Resuming mission.`)
+    } else if (!approved && isExternalMessageSendPermission(resolvedPermission) && canTransitionMission(current.state, 'Waiting for user')) {
+      nextState = 'Waiting for user'
+      nextStep = asText(options.nextStep, '好的，我不会发送。你可以继续改内容，或者说“结束”。')
     } else if (!approved && canTransitionMission(current.state, 'Blocked')) {
       nextState = 'Blocked'
       nextStep = asText(options.nextStep, `Denied: ${target.action}. Mission needs an alternative.`)
