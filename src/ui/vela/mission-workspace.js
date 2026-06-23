@@ -182,7 +182,8 @@ function extractQuotedText(value = '') {
 
 function extractWechatContextLine(artifact = {}) {
   const summary = text(artifact?.summary || artifact?.detail)
-  return summary.match(/最近消息[:：]([^；。]+)/)?.[1]
+  return summary.match(/最近消息[:：]\s*([「"][^；]+?[」"])/)?.[1]
+    || summary.match(/最近消息[:：]([^；。]+)/)?.[1]
     || summary.match(/最近消息[:：](.+?)(?:；没有发送消息|；没有发送|。|$)/)?.[1]
     || ''
 }
@@ -191,6 +192,7 @@ function missionAttention(mission = {}) {
   const permission = latestPendingPermission(mission.permissions)
   if (permission) {
     const externalMessage = isExternalMessagePermission(permission)
+    const draftText = externalMessage ? extractQuotedText(permission.summary || permission.action || permission.title) : ''
     return {
       kind: 'guard',
       panelId: 'guard',
@@ -200,10 +202,10 @@ function missionAttention(mission = {}) {
       secondaryLabel: externalMessage ? 'Review details' : 'Open Guard',
       caption: externalMessage ? 'Send confirmation' : 'Permission gate',
       title: externalMessage
-        ? text(permission.summary || permission.action || permission.title, 'Message draft')
+        ? (draftText ? `我准备这样回：「${draftText}」` : text(permission.summary || permission.action || permission.title, 'Message draft'))
         : text(permission.action || permission.title, 'Permission request'),
       detail: externalMessage
-        ? text(permission.reason, 'Vela will only send after you confirm.')
+        ? '只有你确认后，Vela 才会发送。'
         : buildPermissionDetail(permission),
       permission,
     }
@@ -309,9 +311,9 @@ function assistantReplyForMission(mission = {}, attention = null) {
     if (isExternalMessagePermission(attention.permission)) {
       const draftText = extractQuotedText(attention.permission?.summary || attention.title)
       const contextLine = extractWechatContextLine(latestWechatContextArtifact(mission))
-      const contextPrefix = contextLine ? `我看到了：${contextLine}。` : '我已经整理好上下文。'
-      const draft = draftText ? `我准备这样回：「${draftText}」。` : '我准备好了回复草稿。'
-      return `${contextPrefix}${draft}这样发可以吗？`
+      const contextPrefix = contextLine ? `我看到了最近一条：${contextLine}；` : '我已经整理好上下文；'
+      const draft = draftText ? `准备回复：「${draftText}」` : '我准备好了回复草稿'
+      return `${contextPrefix}${draft}，这样发可以吗？`
     }
     return '我已经准备好下一步了。这个动作会影响外部世界，所以先把要做的事给你确认。'
   }
