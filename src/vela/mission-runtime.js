@@ -100,7 +100,7 @@ const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回
 const WECHAT_ILINK_LOGIN_RE = /(?:(?:wechat|weixin|微信).*(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)|(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码).*(?:wechat|weixin|微信)|ilink)/i
 const WECHAT_QR_SCAN_STATUS_RE = /(?:扫码|二维码|我扫了|已扫|扫好了|扫完了|好了|scan|scanned|qr|login done)/i
 const APP_CONTEXT_FOLLOWUP_RE = /(?:(?:看看|看一下|查看|读一下|读取|检查|帮我看|帮我读).*(?:最近消息|消息|聊天|对话|上下文|当前状态)|(?:最近消息|聊天记录|对话上下文|当前对话|current chat|recent messages|read messages|check messages))/i
-const DRAFT_REPLY_FOLLOWUP_RE = /(?:(?:帮我|替我|给我)?(?:草拟|拟|写|想|生成|准备).*(?:回复|回信|回个|消息)|(?:帮我回复|替我回复|怎么回|如何回复|回什么|回复一下|回一下|draft reply|write reply))/i
+const DRAFT_REPLY_FOLLOWUP_RE = /(?:(?:帮我|替我|给我)?(?:草拟|拟|写|想|生成|准备).*(?:回复|回信|回个|消息)|(?:帮我回复|替我回复|怎么回|如何回复|回什么|回复一下|回一下|给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公)|draft reply|write reply))/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
@@ -1672,10 +1672,24 @@ function externalMessageDraftRevisionText(text = '') {
   return revised
 }
 
+function externalMessageDirectReplyText(text = '') {
+  const raw = asText(text)
+  const match = raw.match(/^(?:给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公)|发(?:给)?(?:她|他|对方|老婆|老公))\s*[:：]\s*(.+)$/)
+    || raw.match(/^(?:给(?:她|他|对方|老婆|老公)回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公))\s*(.{2,})$/)
+  const direct = asText(match?.[1])
+    .replace(/^[「『“"']+/, '')
+    .replace(/[」』”"']+$/, '')
+    .trim()
+  if (/^(一下|一个|信息|消息|回复|回信)$/.test(direct)) return ''
+  return direct
+}
+
 function externalMessageDraftOverride(mission = {}) {
   for (const input of [...normalizeArray(mission.inputs)].reverse()) {
     const revised = externalMessageDraftRevisionText(input?.text)
     if (revised) return revised
+    const direct = externalMessageDirectReplyText(input?.text)
+    if (direct) return direct
   }
   return ''
 }

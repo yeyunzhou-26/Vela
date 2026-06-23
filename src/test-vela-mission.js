@@ -2112,6 +2112,52 @@ try {
   assert(desktopFollowupSendCall.text === '收到，我晚点跟你说。', 'desktop reply approval sends the drafted text')
   assert(desktopFollowupSendCall.contextToken === 'ctx-followup-read', 'desktop reply approval reuses follow-up context token')
   assert(desktopReplySent.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息已发送：yes'))), 'desktop reply approval records live send evidence')
+  runtime.applyCurrentMissionCommand({
+    text: '帮我打开微信',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const desktopDirectReplyContext = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '看看最近消息',
+    source: 'test-command',
+    wechatIlinkReadDeps: {
+      filePath: desktopFollowupCredentialFile,
+      mockMessages: [{
+        from_user_id: 'wife-followup-user',
+        context_token: 'ctx-direct-reply-read',
+        item_list: [{ type: 1, text_item: { text: '我到楼下了。' } }],
+      }],
+      env: {},
+    },
+  })
+  assert(desktopDirectReplyContext.artifacts.at(-1).summary.includes('我到楼下了。'), 'desktop direct reply context reads latest message')
+  const desktopDirectReplyDraft = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '给她回：我马上到',
+    source: 'test-command',
+  })
+  assert(desktopDirectReplyDraft.artifacts.at(-1).summary.includes('我马上到'), 'desktop direct reply uses user provided text')
+  let desktopDirectSendCall = null
+  const desktopDirectReplySent = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '可以',
+    source: 'test-command',
+    wechatIlinkSendDeps: {
+      allowSend: true,
+      filePath: desktopFollowupCredentialFile,
+      clientModule: {
+        WeChatClient: class {
+          async sendText(to, text, contextToken) {
+            desktopDirectSendCall = { to, text, contextToken }
+            return { status: 'ok' }
+          }
+        },
+      },
+      env: {},
+    },
+  })
+  assert(desktopDirectReplySent.state === 'Complete', 'desktop direct reply approval completes mission')
+  assert(desktopDirectSendCall.text === '我马上到', 'desktop direct reply sends user provided text')
+  assert(desktopDirectSendCall.contextToken === 'ctx-direct-reply-read', 'desktop direct reply reuses latest context token')
 
   const wechatLoginMission = runtime.applyCurrentMissionCommand({
     text: '连接微信',
