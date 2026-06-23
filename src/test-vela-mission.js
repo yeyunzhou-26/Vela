@@ -2275,6 +2275,21 @@ try {
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
   })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const assistantRevisedDraft = runtime.applyCurrentMissionCommand({ text: '改成：我马上到楼下', source: 'test-command' })
+  assert(assistantRevisedDraft.state === 'Waiting for permission', 'external message revised draft keeps waiting for confirmation')
+  assert(assistantRevisedDraft.nextStep.includes('我马上到楼下'), 'external message revised draft asks with updated text')
+  assert(assistantRevisedDraft.permissions.at(-1).summary.includes('我马上到楼下'), 'external message revised draft updates pending permission summary')
+  assert(assistantRevisedDraft.artifacts.at(-1).summary.includes('我马上到楼下'), 'external message revised draft records updated draft artifact')
+  assert(!assistantRevisedDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message revised draft does not send before approval')
+  const assistantRevisedDraftApproved = runtime.applyCurrentMissionCommand({ text: '可以', source: 'test-command' })
+  assert(assistantRevisedDraftApproved.state === 'Complete', 'external message revised draft approval completes mission')
+  assert(assistantRevisedDraftApproved.artifacts.some(item => item.kind === 'send-receipt' && item.summary.includes('我马上到楼下')), 'external message revised draft approval sends updated text')
+
+  runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
   let runtimeWechatReadOpts = null
   let runtimeWechatReadTimeout = null
   const assistantWechatContextDraft = await runtime.applyCurrentMissionCommandWithAdapters({

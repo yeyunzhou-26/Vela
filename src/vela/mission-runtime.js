@@ -92,7 +92,7 @@ const COMMAND_PERMISSION_RE = /(?:\b(?:permission|approval|approve|approved|allo
 const COMMAND_RECOVERY_RE = /(?:\b(?:blocked|recover|recovery|repair|fix blocker)\b|阻塞|恢复|修复)/i
 const COMMAND_START_RE = /^(start|new|create|mission|开始|新建|创建)\s*[:：-]?\s+(.+)$/i
 const COMMAND_STOP_RE = /^(?:(?:stop|pause|cancel|interrupt)\b|(?:停止|暂停|打断|取消)(?:\s|$))/i
-const COMMAND_REPAIR_RE = /^(?:(?:not that|change it to|change that to|repair that)\b|(?:不是这个|不是这样|不对|改一下|修改|改成|改为|修正为|修正)(?:\s|$))/i
+const COMMAND_REPAIR_RE = /^(?:(?:not that|change it to|change that to|repair that)\b|(?:不是这个|不是这样|不对|改一下|修改|改成|改为|修正为|修正)(?:\s|[:：]|$))/i
 const VOICE_CREDENTIAL_RE = /(?:\b(?:password|passcode|api key|secret|token|credential|private key)\b|密码|密钥|令牌|凭证|凭据)/i
 const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|reply)\b|发给|发送|邮件|消息|回复|发布)/i
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
@@ -1576,7 +1576,28 @@ function externalMessageRecipient(mission = {}) {
   return '对方'
 }
 
+function externalMessageDraftRevisionText(text = '') {
+  const raw = asText(text)
+  const match = raw.match(/^(?:change it to|change that to|repair that to)\s*[:：]?\s*(.+)$/i)
+    || raw.match(/^(?:改成|改为|修改为|修正为|修正)\s*[:：]?\s*(.+)$/)
+  const revised = asText(match?.[1])
+    .replace(/^[「『“"']+/, '')
+    .replace(/[」』”"']+$/, '')
+    .trim()
+  return revised
+}
+
+function externalMessageDraftOverride(mission = {}) {
+  for (const input of [...normalizeArray(mission.inputs)].reverse()) {
+    const revised = externalMessageDraftRevisionText(input?.text)
+    if (revised) return revised
+  }
+  return ''
+}
+
 function draftExternalMessageText(mission = {}) {
+  const override = externalMessageDraftOverride(mission)
+  if (override) return override
   const sourceText = externalMessageSourceText(mission)
   if (/(老婆|妻子|太太|媳妇)/.test(sourceText)) return '收到，我晚点跟你说。'
   if (/(老公|先生)/.test(sourceText)) return '收到，我晚点跟你说。'
@@ -1841,6 +1862,17 @@ function isExternalMessageSendPermission(permission = {}) {
     && asText(permission.planStepId) === 'confirm-send'
 }
 
+function pendingExternalMessageSendPermission(mission = {}) {
+  const permissions = normalizeArray(mission.permissions)
+  for (let index = permissions.length - 1; index >= 0; index -= 1) {
+    const permission = permissions[index]
+    if (isPendingPermissionDecision(permission?.decision) && isExternalMessageSendPermission(permission)) {
+      return permission
+    }
+  }
+  return null
+}
+
 function hasExternalMessageSendResult(mission = {}) {
   return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'messages.outbound.send')
     || normalizeArray(mission.artifacts).some(artifact => artifact?.kind === 'send-receipt')
@@ -2051,6 +2083,57 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
   return current.state === 'Blocked' && contextResult?.adapterId === 'wechat-ilink'
     ? resolveWechatContextRecoveryActions(next)
     : next
+}
+
+function reviseExternalMessageDraftByCommand(current = {}, input = {}, text = '') {
+  const revisedText = externalMessageDraftRevisionText(text)
+  const pendingPermission = pendingExternalMessageSendPermission(current)
+  if (!revisedText || !pendingPermission || !isExternalMessageMission(current)) return null
+
+  appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+  const missionWithInput = getCurrentMission()
+  const summary = externalMessageDraftSummary(missionWithInput)
+  const payload = externalMessageDraftPayload(missionWithInput)
+  const payloadSummary = externalMessagePayloadSummary(payload)
+  const nextStep = `${summary}，这样发可以吗？`
+  updateCurrentMission({
+    state: 'Waiting for permission',
+    nextStep,
+    plan: advanceExternalMessagePlanToConfirm(missionWithInput.plan),
+    permissions: normalizeArray(missionWithInput.permissions).map(permission => (
+      permission.id === pendingPermission.id
+        ? {
+            ...permission,
+            action: nextStep,
+            reason: `${payloadSummary}；用户明确确认前不发送。`,
+            summary: `${summary} ${payloadSummary}`,
+          }
+        : permission
+    )),
+  })
+  appendCurrentMissionAgentAction({
+    role: 'Operator',
+    title: '修改待确认回复',
+    status: 'drafted',
+    planStepId: 'draft-reply',
+    summary: `${summary}；等待用户确认后才发送。`,
+    result: '重新等待发送确认',
+    requiresReview: false,
+  })
+  appendCurrentMissionArtifact({
+    title: '拟发送内容',
+    kind: 'draft',
+    uri: `vela://capabilities/messages.outbound/drafts/${Date.now()}`,
+    summary: `${summary} ${payloadSummary}`,
+    planStepId: 'draft-reply',
+  })
+  return appendCurrentMissionTrace({
+    type: 'command.repair',
+    title: 'External message draft revised',
+    detail: text,
+    result: nextStep,
+    screenContext: input.screenContext,
+  })
 }
 
 export function normalizeMission(value = {}) {
@@ -2853,6 +2936,14 @@ export function applyCurrentMissionCommand(input = {}) {
         state: 'Waiting for permission',
         nextStep: `需要先确认：${pendingPermission.action}`,
       })
+    }
+  }
+
+  if (isRepair) {
+    const current = getCurrentMission()
+    if (current.state === 'Waiting for permission' && isExternalMessageMission(current)) {
+      const revised = reviseExternalMessageDraftByCommand(current, input, text)
+      if (revised) return revised
     }
   }
 
