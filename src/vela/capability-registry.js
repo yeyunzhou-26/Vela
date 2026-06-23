@@ -22,6 +22,12 @@ function hasGitHubToolIntent(value) {
   return /(?:mcp|tool|工具|issue|issues|议题|pr\b|pull request|拉取请求|repo|repository|仓库|开源|项目|搜索|查找|寻找|推荐|候选|对比|调研|readme|源码|代码)/i.test(text)
 }
 
+function hasWechatIlinkSessionIntent(value) {
+  const text = normalizeForMatch(value)
+  if (!/(?:wechat|weixin|微信|ilink)/i.test(text)) return false
+  return /(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)/i.test(text)
+}
+
 export const OPEN_CAPABILITY_REGISTRY = [
   {
     id: 'browser.web-agent',
@@ -88,6 +94,26 @@ export const OPEN_CAPABILITY_REGISTRY = [
     ],
     integrationStatus: 'adapter-ready',
     evaluation: 'test:vela-mission covers planner-researcher-builder-operator-reviewer handoff, internal-only execution, guard boundary evidence, and reviewer checks.',
+  },
+  {
+    id: 'wechat.ilink-session',
+    category: 'messaging',
+    label: '微信 iLink 会话',
+    summary: '准备微信 iLink 扫码登录、凭据存储和会话预检；发送消息前仍需单独确认。',
+    triggers: ['微信登录', '登录微信', '连接微信', '微信连接', '微信授权', '授权微信', '接入微信', '绑定微信', '扫码登录', 'wechat login', 'wechat auth', 'wechat connect', 'ilink'],
+    agentRole: 'Operator',
+    riskClasses: ['Credential', 'External message', 'Network'],
+    permissionBoundary: '扫码登录、保存 token/accountId、读取消息和发送消息必须分开确认。',
+    openSourceRefs: [
+      {
+        name: 'wechat-ilink-client',
+        url: 'vela://capabilities/wechat-ilink',
+        lesson: 'Use iLink as a guarded protocol adapter: preflight first, QR login under Credential guard, and outbound send under External message guard.',
+        licensePolicy: 'adapter-only',
+      },
+    ],
+    integrationStatus: 'adapter-ready',
+    evaluation: 'test:vela-mission covers iLink package preflight, local credential store, QR-login preparation, and guarded login permission flow.',
   },
   {
     id: 'desktop.app-control',
@@ -210,7 +236,8 @@ export function findOpenCapabilitiesForText(value, options = {}) {
       const triggerHits = capability.triggers.filter(trigger => hasAny(text, [trigger]))
       const urlHit = capability.id === 'browser.web-agent' && WEB_URL_RE.test(text)
       const githubToolBoost = capability.id === 'tool.mcp-bridge' && hasGitHubToolIntent(text) ? 3 : 0
-      const score = triggerHits.length + (urlHit ? 1 : 0) + githubToolBoost
+      const wechatSessionBoost = capability.id === 'wechat.ilink-session' && hasWechatIlinkSessionIntent(text) ? 3 : 0
+      const score = triggerHits.length + (urlHit ? 1 : 0) + githubToolBoost + wechatSessionBoost
       return { capability, triggerHits, score }
     })
     .filter(item => item.score > 0)

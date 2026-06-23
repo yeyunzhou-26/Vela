@@ -88,6 +88,9 @@ try {
   assert(browserCapability.integrationStatus === 'adapter-ready', 'browser capability is marked adapter-ready')
   const urlCapability = capabilityRegistry.findOpenCapabilitiesForText('总结 https://example.com/vela')[0]
   assert(urlCapability.id === 'browser.web-agent', 'capability registry routes bare URLs to browser agent')
+  const wechatSessionCapability = capabilityRegistry.findOpenCapabilitiesForText('连接微信')[0]
+  assert(wechatSessionCapability.id === 'wechat.ilink-session', 'capability registry routes WeChat login tasks to iLink session')
+  assert(wechatSessionCapability.riskClasses.includes('Credential'), 'WeChat iLink session declares credential risk')
   const browserAdapterPlan = capabilityAdapters.planCapabilityAdapterRun({
     title: '帮我打开网页搜索资料并总结',
     plan: [{ id: 'execute-review', label: '执行并复核', status: 'Active' }],
@@ -1810,6 +1813,53 @@ try {
   assert(desktopStages.some(item => item.toolName === 'desktop.screen-context' && item.url === 'screen://mock/current-app'), 'desktop command records mocked screen-context stage')
   assert(desktopStages.some(item => item.toolName === 'desktop.real-adapter' && item.result === 'skipped'), 'desktop command records skipped real-adapter stage')
   assert(desktopStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'desktop command records skipped external-effect stage')
+
+  const wechatLoginMission = runtime.applyCurrentMissionCommand({
+    text: '连接微信',
+    source: 'test-command',
+  })
+  assert(wechatLoginMission.title.includes('微信'), 'WeChat login command starts a natural login mission')
+  assert(wechatLoginMission.nextStep.includes('扫码登录'), 'WeChat login mission explains QR login confirmation')
+  assert(wechatLoginMission.plan.find(item => item.id === 'prepare-login')?.status === 'Active', 'WeChat login mission activates login preparation')
+  assert(wechatLoginMission.plan.find(item => item.id === 'confirm-login')?.label.includes('确认'), 'WeChat login mission keeps QR login confirmation')
+  assert(wechatLoginMission.agentActions.at(-1).title === '准备连接微信', 'WeChat login mission records operator preparation')
+  assert(wechatLoginMission.capabilityReferences.at(0)?.id === 'wechat.ilink-session', 'WeChat login mission prioritizes iLink session capability')
+  assert(wechatLoginMission.capabilityReferences.some(item => item.riskClasses.includes('Credential')), 'WeChat login mission declares credential risk')
+  const wechatLoginGate = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(wechatLoginGate.state === 'Waiting for permission', 'WeChat login continue waits for QR login permission')
+  assert(wechatLoginGate.nextStep.includes('生成微信 iLink 扫码登录请求'), 'WeChat login continue asks for login permission in the main workflow')
+  assert(wechatLoginGate.plan.find(item => item.id === 'confirm-login')?.status === 'Active', 'WeChat login continue activates confirmation step')
+  assert(wechatLoginGate.toolCalls.some(item => item.toolName === 'wechat-ilink.qr-login.prepare'), 'WeChat login continue records iLink preparation tool')
+  assert(wechatLoginGate.artifacts.some(item => item.title === '微信登录准备'), 'WeChat login continue creates preparation artifact')
+  assert(wechatLoginGate.artifacts.some(item => item.kind === 'credential-login-preflight'), 'WeChat login preparation artifact is credential preflight')
+  assert(wechatLoginGate.permissions.at(-1).risk === 'Credential', 'WeChat login permission records credential risk')
+  assert(wechatLoginGate.permissions.at(-1).toolCallId === 'wechat-ilink.qr-login', 'WeChat login permission scopes QR login tool')
+  assert(wechatLoginGate.permissions.at(-1).reason.includes('必须分别经过用户确认'), 'WeChat login permission records separate confirmation guardrail')
+  assert(wechatLoginGate.reviewChecks.some(item => item.title === '微信登录准备复核' && item.outcome === 'passed'), 'WeChat login preparation is reviewed')
+  assert(wechatLoginGate.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('未生成二维码'))), 'WeChat login review records no QR before approval')
+  assert(wechatLoginGate.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('未保存 token/accountId'))), 'WeChat login review records no credential save before approval')
+  assert(!wechatLoginGate.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'WeChat login preparation does not send messages')
+  const wechatLoginPrepareTool = wechatLoginGate.toolCalls.find(item => item.toolName === 'wechat-ilink.qr-login.prepare')
+  const wechatLoginPrepareStages = wechatLoginGate.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === wechatLoginPrepareTool?.id)
+  assert(wechatLoginPrepareStages.some(item => item.toolName === 'wechat-ilink.package' && item.result === 'ok'), 'WeChat login preparation checks iLink package')
+  assert(wechatLoginPrepareStages.some(item => item.toolName === 'wechat-ilink.credential-store' && item.result === 'ok'), 'WeChat login preparation prepares credential store')
+  assert(wechatLoginPrepareStages.some(item => item.toolName === 'wechat-ilink.qr-login' && item.result === 'skipped'), 'WeChat login preparation skips QR before approval')
+  assert(wechatLoginPrepareStages.some(item => item.toolName === 'wechat-ilink.credential-save' && item.result === 'skipped'), 'WeChat login preparation skips credential save before approval')
+  const wechatLoginApproved = runtime.applyCurrentMissionCommand({ text: '可以', source: 'test-command' })
+  assert(wechatLoginApproved.state === 'Running', 'WeChat login approval resumes the mission')
+  assert(wechatLoginApproved.permissions.at(-1).decision === 'approved', 'WeChat login approval resolves credential permission')
+  assert(wechatLoginApproved.toolCalls.some(item => item.toolName === 'wechat-ilink.qr-login.authorize'), 'WeChat login approval records QR authorization tool')
+  assert(wechatLoginApproved.artifacts.some(item => item.kind === 'credential-login-ready'), 'WeChat login approval creates login-ready artifact')
+  assert(wechatLoginApproved.plan.find(item => item.id === 'save-credentials')?.status === 'Active', 'WeChat login approval moves to credential-save step')
+  assert(wechatLoginApproved.nextStep.includes('展示二维码'), 'WeChat login approval reports next QR display step')
+  assert(wechatLoginApproved.reviewChecks.some(item => item.title === '微信登录授权复核' && item.outcome === 'passed'), 'WeChat login approval records authorization review')
+  assert(wechatLoginApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('授权后仍未生成二维码'))), 'WeChat login authorization review records no real QR yet')
+  assert(wechatLoginApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('授权后仍未保存 token/accountId'))), 'WeChat login authorization review records no saved credentials yet')
+  const wechatLoginAuthorizeTool = wechatLoginApproved.toolCalls.find(item => item.toolName === 'wechat-ilink.qr-login.authorize')
+  const wechatLoginAuthorizeStages = wechatLoginApproved.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === wechatLoginAuthorizeTool?.id)
+  assert(wechatLoginAuthorizeStages.some(item => item.toolName === 'wechat-ilink.qr-login' && item.result === 'skipped'), 'WeChat login approval still skips real QR generation')
+  assert(wechatLoginAuthorizeStages.some(item => item.toolName === 'wechat-ilink.credential-save' && item.result === 'skipped'), 'WeChat login approval still skips credential save')
+  assert(!wechatLoginApproved.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'WeChat login approval does not send messages')
 
   const assistantMessageMission = runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',

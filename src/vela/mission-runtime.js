@@ -4,6 +4,7 @@ import { paths } from '../paths.js'
 import { executeCapabilityAdapterRun, planCapabilityAdapterRun, prepareCapabilityAdapterResult } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapter-bridge.js'
+import { prepareWechatIlinkLoginRequest } from './wechat-ilink-adapter.js'
 
 export const MISSION_STATES = [
   'Draft',
@@ -56,6 +57,12 @@ const PERSONAL_ASSISTANT_MESSAGE_PLAN = [
   { id: 'draft-reply', label: '草拟可发送内容', status: 'Next' },
   { id: 'confirm-send', label: '确认后再发送', status: 'Next' },
 ]
+const WECHAT_ILINK_LOGIN_PLAN = [
+  { id: 'understand-request', label: '理解微信连接目标', status: 'Done' },
+  { id: 'prepare-login', label: '准备扫码登录请求', status: 'Active' },
+  { id: 'confirm-login', label: '确认后再开始登录', status: 'Next' },
+  { id: 'save-credentials', label: '登录成功后确认保存凭据', status: 'Next' },
+]
 const LEGACY_DEFAULT_PLAN_LABELS = new Map([
   ['clarify-goal|Clarify mission goal', '确认任务目标'],
   ['draft-plan|Draft mission plan', '整理执行计划'],
@@ -79,6 +86,7 @@ const VOICE_CREDENTIAL_RE = /(?:\b(?:password|passcode|api key|secret|token|cred
 const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|reply)\b|发给|发送|邮件|消息|回复|发布)/i
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
 const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回复|回个|发消息|发信息|发微信|转发|发送)/i
+const WECHAT_ILINK_LOGIN_RE = /(?:(?:wechat|weixin|微信).*(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)|(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码).*(?:wechat|weixin|微信)|ilink)/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
@@ -880,12 +888,26 @@ function isExternalMessageIntent(text) {
   return Boolean(value) && (VOICE_EXTERNAL_MESSAGE_RE.test(value) || ASSISTANT_EXTERNAL_MESSAGE_RE.test(value))
 }
 
+function isWechatIlinkLoginIntent(text) {
+  const value = asText(text)
+  return Boolean(value) && WECHAT_ILINK_LOGIN_RE.test(value)
+}
+
 function assistantPlanForText(text) {
-  return (isExternalMessageIntent(text) ? PERSONAL_ASSISTANT_MESSAGE_PLAN : STARTED_PLAN)
+  return (
+    isWechatIlinkLoginIntent(text)
+      ? WECHAT_ILINK_LOGIN_PLAN
+      : isExternalMessageIntent(text)
+        ? PERSONAL_ASSISTANT_MESSAGE_PLAN
+        : STARTED_PLAN
+  )
     .map(step => ({ ...step }))
 }
 
 function assistantNextStepForText(text) {
+  if (isWechatIlinkLoginIntent(text)) {
+    return '好的，我先准备微信连接。扫码登录、保存凭据和发送消息都会分开确认。'
+  }
   if (isExternalMessageIntent(text)) {
     return '好的，我先去看一下。拿到上下文后，我会把准备发送的内容给你确认。'
   }
@@ -893,6 +915,17 @@ function assistantNextStepForText(text) {
 }
 
 function makeAssistantAgentAction(text, createdAt = new Date().toISOString()) {
+  if (isWechatIlinkLoginIntent(text)) {
+    return makeAgentActionRecord({
+      role: 'Operator',
+      title: '准备连接微信',
+      status: 'waiting_for_login_confirmation',
+      planStepId: 'prepare-login',
+      summary: 'Vela 会先准备微信 iLink 扫码登录请求；生成二维码、保存凭据或发送消息前都会单独确认。',
+      result: '等待登录准备',
+      requiresReview: false,
+    }, { createdAt })
+  }
   if (!isExternalMessageIntent(text)) return null
   return makeAgentActionRecord({
     role: 'Operator',
@@ -903,6 +936,250 @@ function makeAssistantAgentAction(text, createdAt = new Date().toISOString()) {
     result: '等待上下文',
     requiresReview: false,
   }, { createdAt })
+}
+
+function isWechatIlinkLoginMission(mission = {}) {
+  return isWechatIlinkLoginIntent(mission.title)
+    || isWechatIlinkLoginIntent(mission.goal)
+    || normalizeArray(mission.inputs).some(input => isWechatIlinkLoginIntent(input?.text))
+    || normalizeArray(mission.plan).some(step => ['prepare-login', 'confirm-login', 'save-credentials'].includes(asText(step?.id)))
+}
+
+function hasWechatIlinkLoginPreparation(mission = {}) {
+  return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'wechat-ilink.qr-login.prepare')
+}
+
+function hasWechatIlinkLoginAuthorization(mission = {}) {
+  return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'wechat-ilink.qr-login.authorize')
+    || normalizeArray(mission.artifacts).some(artifact => artifact?.kind === 'credential-login-ready')
+}
+
+function wechatIlinkLoginSummary(request = {}) {
+  return `微信 iLink 登录准备：库可用=${request.packageAvailable ? 'yes' : 'no'}；凭据保存位置：${asText(request.credentialStorePath)}；Guard：${asText(request.guardrail)}`
+}
+
+function appendWechatIlinkLoginPreparation(mission = {}) {
+  if (hasWechatIlinkLoginPreparation(mission)) return getCurrentMission()
+  const planStepId = 'prepare-login'
+  const toolCallId = makeId('tool-wechat-ilink-login-prepare')
+  const artifactId = makeId('artifact-wechat-ilink-login')
+  const request = prepareWechatIlinkLoginRequest()
+  const summary = wechatIlinkLoginSummary(request)
+
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'wechat-ilink.qr-login.prepare',
+    role: 'Operator',
+    status: request.packageAvailable ? 'prepared' : 'blocked',
+    planStepId,
+    risk: 'Credential',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.package',
+    toolCallId,
+    role: 'Operator',
+    status: request.packageAvailable ? 'ok' : 'failed',
+    stage: 'wechat-ilink-package-check',
+    url: request.packagePath,
+    planStepId,
+    summary: request.packageAvailable ? 'wechat-ilink-client 已安装。' : '未找到 wechat-ilink-client。',
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.credential-store',
+    toolCallId,
+    role: 'Operator',
+    status: 'ok',
+    stage: 'wechat-ilink-credential-store-prepared',
+    url: 'credential://wechat-ilink/store',
+    planStepId,
+    summary: `凭据将保存到 Vela 用户数据目录；记录路径：${request.credentialStorePath}。`,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.qr-login',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'wechat-ilink-no-qr-login-before-confirmation',
+    url: 'credential://wechat-ilink/qr-login',
+    planStepId,
+    summary: '未生成二维码，等待用户确认。',
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.credential-save',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'wechat-ilink-no-credential-save',
+    url: 'credential://wechat-ilink/save-skipped',
+    planStepId,
+    summary: '未保存 token/accountId。',
+  })
+  appendCurrentMissionArtifact({
+    id: artifactId,
+    title: '微信登录准备',
+    kind: 'credential-login-preflight',
+    uri: `vela://capabilities/wechat.ilink-session/login/${toolCallId}`,
+    summary,
+    planStepId,
+  })
+  return appendCurrentMissionReviewCheck({
+    key: `wechat-ilink-login-preparation-${asText(mission.id, 'mission')}`,
+    title: '微信登录准备复核',
+    outcome: request.packageAvailable ? 'passed' : 'blocked',
+    reviewer: 'Vela Credential Reviewer',
+    planStepId,
+    artifactId,
+    toolCallId,
+    summary: '微信 iLink 登录准备只创建可复核的登录计划，没有生成二维码、保存凭据或发送消息。',
+    evidence: [
+      `库可用：${request.packageAvailable ? 'yes' : 'no'}`,
+      `凭据保存位置：${request.credentialStorePath}`,
+      '未生成二维码。',
+      '未保存 token/accountId。',
+      '未读取微信消息。',
+      '未发送微信消息。',
+      `Guard：${request.guardrail}`,
+    ],
+  })
+}
+
+function advanceWechatIlinkLoginPlanToConfirm(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (step.id === 'understand-request' || step.id === 'prepare-login') return { ...step, status: 'Done' }
+    if (step.id === 'confirm-login') return { ...step, status: 'Active' }
+    return step.status === 'Active' ? { ...step, status: 'Done' } : step
+  })
+}
+
+function advanceWechatIlinkLoginPlanAfterApproval(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (['understand-request', 'prepare-login', 'confirm-login'].includes(step.id)) return { ...step, status: 'Done' }
+    if (step.id === 'save-credentials') return { ...step, status: 'Active' }
+    return step.status === 'Active' ? { ...step, status: 'Done' } : step
+  })
+}
+
+function isWechatIlinkLoginPermission(permission = {}) {
+  return asText(permission.risk).toLowerCase() === 'credential'
+    && asText(permission.toolCallId) === 'wechat-ilink.qr-login'
+    && asText(permission.planStepId) === 'confirm-login'
+}
+
+function advanceWechatIlinkLoginMissionByCommand(current = {}, input = {}) {
+  const createdAt = new Date().toISOString()
+  const request = prepareWechatIlinkLoginRequest()
+  const summary = '我已准备好微信 iLink 扫码登录。生成二维码前需要你确认。'
+  const action = makeAgentActionRecord({
+    role: 'Operator',
+    title: '准备微信扫码登录',
+    status: 'needs_confirmation',
+    planStepId: 'prepare-login',
+    summary,
+    result: '待确认',
+    requiresReview: false,
+  }, { createdAt })
+
+  updateCurrentMission({
+    state: 'Running',
+    nextStep: '我已准备好微信扫码登录。要生成登录二维码吗？',
+    plan: advanceWechatIlinkLoginPlanToConfirm(current.plan),
+    agentActions: [...normalizeArray(current.agentActions), action],
+  })
+  appendWechatIlinkLoginPreparation(current)
+  return appendCurrentMissionPermission({
+    action: '生成微信 iLink 扫码登录请求',
+    risk: 'Credential',
+    decision: 'requested',
+    summary: `${summary} ${wechatIlinkLoginSummary(request)}`,
+    reason: request.guardrail,
+    requestedBy: 'Vela Operator',
+    planStepId: 'confirm-login',
+    toolCallId: 'wechat-ilink.qr-login',
+    scope: 'credential://wechat-ilink/login',
+    screenContext: input.screenContext,
+  })
+}
+
+function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}) {
+  if (!isWechatIlinkLoginPermission(permission) || !isWechatIlinkLoginMission(mission)) return mission
+  if (hasWechatIlinkLoginAuthorization(mission)) return mission
+
+  const request = prepareWechatIlinkLoginRequest()
+  const toolCallId = makeId('tool-wechat-ilink-login-authorize')
+  const artifactId = makeId('artifact-wechat-ilink-login-ready')
+  const summary = '已获得微信扫码登录准备授权；当前仍未生成二维码、未保存凭据、未发送消息。'
+
+  appendCurrentMissionAgentAction({
+    role: 'Operator',
+    title: '微信扫码登录已授权',
+    status: 'authorized',
+    planStepId: 'confirm-login',
+    summary,
+    result: '等待真实二维码登录',
+    requiresReview: false,
+  })
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'wechat-ilink.qr-login.authorize',
+    role: 'Operator',
+    status: 'prepared',
+    planStepId: 'confirm-login',
+    risk: 'Credential',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.qr-login',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'wechat-ilink-real-qr-login-pending',
+    url: 'credential://wechat-ilink/qr-login',
+    planStepId: 'confirm-login',
+    summary: '真实二维码生成尚未执行；后续接入时会把二维码展示给用户扫码。',
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.credential-save',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'wechat-ilink-save-after-login-pending',
+    url: 'credential://wechat-ilink/save-after-confirmation',
+    planStepId: 'save-credentials',
+    summary: '登录成功后仍需单独确认保存 token/accountId。',
+  })
+  appendCurrentMissionArtifact({
+    id: artifactId,
+    title: '微信扫码登录授权',
+    kind: 'credential-login-ready',
+    uri: `vela://capabilities/wechat.ilink-session/login-ready/${toolCallId}`,
+    summary,
+    planStepId: 'confirm-login',
+  })
+  appendCurrentMissionReviewCheck({
+    key: `wechat-ilink-login-authorized-${asText(mission.id, 'mission')}`,
+    title: '微信登录授权复核',
+    outcome: 'passed',
+    reviewer: 'Vela Credential Reviewer',
+    planStepId: 'confirm-login',
+    artifactId,
+    toolCallId,
+    summary: '微信扫码登录授权已记录，但没有执行真实登录、保存凭据或发送消息。',
+    evidence: [
+      `批准记录：${permission.id}`,
+      `凭据保存位置：${request.credentialStorePath}`,
+      '授权后仍未生成二维码。',
+      '授权后仍未保存 token/accountId。',
+      '授权后仍未读取或发送微信消息。',
+      '保存凭据和发送消息需要后续单独确认。',
+    ],
+  })
+  const reviewedMission = getCurrentMission()
+  return updateCurrentMission({
+    state: 'Running',
+    plan: advanceWechatIlinkLoginPlanAfterApproval(reviewedMission.plan),
+    nextStep: '已获得微信扫码登录授权。下一步接入真实二维码生成后，我会展示二维码让你扫码；登录成功后再单独确认保存凭据。',
+  })
 }
 
 function isExternalMessageMission(mission = {}) {
@@ -1834,6 +2111,9 @@ export function resolveCurrentMissionPermission(id, patch = {}) {
   if (approved && !stillPending && isExternalMessageSendPermission(resolvedPermission)) {
     return completeExternalMessageAfterApproval(written, resolvedPermission)
   }
+  if (approved && !stillPending && isWechatIlinkLoginPermission(resolvedPermission)) {
+    return completeWechatIlinkLoginAfterApproval(written, resolvedPermission)
+  }
   return written
 }
 
@@ -2032,6 +2312,9 @@ export function applyCurrentMissionCommand(input = {}) {
   const current = getCurrentMission()
   const nextState = isComplete ? 'Complete' : getNextCommandState(current.state)
   if (isContinue) {
+    if (current.state === 'Planned' && nextState === 'Running' && isWechatIlinkLoginMission(current)) {
+      return advanceWechatIlinkLoginMissionByCommand(current, input)
+    }
     if (current.state === 'Planned' && nextState === 'Running' && isExternalMessageMission(current)) {
       return advanceExternalMessageMissionByCommand(current, input, text)
     }
