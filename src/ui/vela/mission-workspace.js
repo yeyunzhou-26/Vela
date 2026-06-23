@@ -488,10 +488,12 @@ function renderArtifactCanvas(artifacts, selectedArtifactId, plan) {
   `
 }
 
-function renderAttentionStrip(attention) {
+function renderAttentionStrip(attention, { isSubmittingCommand = false } = {}) {
   if (!attention) return ''
   const hasPrimary = attention.primaryAction && attention.primaryLabel
   const hasSecondary = attention.secondaryAction && attention.secondaryLabel
+  const primaryDisabledAttr = isSubmittingCommand ? ' disabled' : ''
+  const primaryLabel = isSubmittingCommand ? 'Working' : attention.primaryLabel
   return `
     <div class="mission-attention-strip" data-attention-kind="${escapeHtml(attention.kind)}" role="status">
       <div class="attention-copy">
@@ -501,8 +503,8 @@ function renderAttentionStrip(attention) {
       </div>
       <div class="attention-actions">
         ${hasPrimary ? `
-          <button class="attention-action primary" type="button" data-attention-action="primary">
-            ${escapeHtml(zh(attention.primaryLabel))}
+          <button class="attention-action primary" type="button" data-attention-action="primary"${primaryDisabledAttr}>
+            ${escapeHtml(zh(primaryLabel))}
           </button>
         ` : ''}
         ${hasSecondary ? `
@@ -515,12 +517,15 @@ function renderAttentionStrip(attention) {
   `
 }
 
-export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand } = {}) {
+export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand, isSubmittingCommand = false } = {}) {
   const plan = Array.isArray(mission.plan) ? mission.plan : []
   const artifacts = asArray(mission.artifacts)
   const activeMode = workspaceMode === 'artifacts' ? 'artifacts' : 'plan'
   const guardNotice = String(notice || '').trim()
   const attention = missionAttention(mission)
+  const disabledAttr = isSubmittingCommand ? ' disabled' : ''
+  const actionLabel = isSubmittingCommand ? 'Working' : 'Continue'
+  const sendLabel = isSubmittingCommand ? 'Working' : 'Send'
   const workspace = document.createElement('section')
   workspace.className = 'mission-workspace'
   workspace.setAttribute('aria-label', zh('Mission Workspace'))
@@ -541,14 +546,14 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
         : renderPlanCanvas(mission, plan)}
     </section>
 
-    ${renderAttentionStrip(attention)}
+    ${renderAttentionStrip(attention, { isSubmittingCommand })}
 
     <div class="next-step-strip">
       <div class="next-step-copy">
         <span class="caption">${escapeHtml(zh('Next step'))}</span>
         <strong>${escapeHtml(zh(mission.nextStep))}</strong>
       </div>
-      <button class="step-action" type="button" title="${escapeHtml(zh('Continue'))}">${escapeHtml(zh('Continue'))}</button>
+      <button class="step-action" type="button" title="${escapeHtml(zh(actionLabel))}"${disabledAttr}>${escapeHtml(zh(actionLabel))}</button>
     </div>
 
     ${guardNotice ? `
@@ -558,19 +563,21 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
       </div>
     ` : ''}
 
-    <form class="mission-input" aria-label="${escapeHtml(zh('Mission command input'))}">
-      <input type="text" placeholder="${escapeHtml(zh('Tell Vela what to do'))}">
-      <button type="submit">${escapeHtml(zh('Send'))}</button>
+    <form class="mission-input" aria-label="${escapeHtml(zh('Mission command input'))}" aria-busy="${isSubmittingCommand ? 'true' : 'false'}">
+      <input type="text" placeholder="${escapeHtml(zh('Tell Vela what to do'))}"${disabledAttr}>
+      <button type="submit"${disabledAttr}>${escapeHtml(zh(sendLabel))}</button>
     </form>
   `
   workspace.querySelector('.mission-input')?.addEventListener('submit', (event) => {
     event.preventDefault()
+    if (isSubmittingCommand) return
     const input = workspace.querySelector('.mission-input input')
     const value = input?.value || ''
     Promise.resolve(onSubmitCommand?.(value)).catch(() => {})
     if (input) input.value = ''
   })
   workspace.querySelector('.step-action')?.addEventListener('click', () => {
+    if (isSubmittingCommand) return
     Promise.resolve(onSubmitCommand?.('继续')).catch(() => {})
   })
   for (const button of workspace.querySelectorAll('.workspace-mode-tab')) {
@@ -591,6 +598,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     })
   }
   workspace.querySelector('[data-attention-action="primary"]')?.addEventListener('click', () => {
+    if (isSubmittingCommand) return
     if (attention?.primaryAction === 'approve-permission') {
       Promise.resolve(onApprovePermission?.(attention.permission)).catch(() => {})
     } else if (attention?.primaryAction === 'resolve-review-check') {

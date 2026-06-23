@@ -64,6 +64,7 @@ function mountVelaShell(root) {
     selectedArtifactId: '',
     voiceState: 'Idle',
     voiceNotice: '',
+    isSubmittingCommand: false,
   }
 
   const rerender = () => renderVelaShell(root, state, {
@@ -84,9 +85,13 @@ function mountVelaShell(root) {
       rerender()
     },
     onSubmitCommand: async (text) => {
+      const command = String(text || '').trim()
+      if (!command || state.isSubmittingCommand) return
       try {
+        state.isSubmittingCommand = true
         state.notice = ''
-        const mission = await sendMissionCommand(text)
+        rerender()
+        const mission = await sendMissionCommand(command)
         if (!mission) return
         state.mission = mission
         state.activeView = 'today'
@@ -97,8 +102,10 @@ function mountVelaShell(root) {
           await refreshMissions(state)
         }
         state.notice = formatMissionErrorNotice(err, 'Unable to send mission command')
+      } finally {
+        state.isSubmittingCommand = false
+        rerender()
       }
-      rerender()
     },
     onSelectPermissionMode: async (permissionMode) => {
       const mode = text(permissionMode)
@@ -343,6 +350,7 @@ function renderVelaShell(root, state, handlers) {
       onResolveReviewCheck: handlers.onResolveReviewCheck,
       onOpenSpinePanel: handlers.onOpenSpinePanel,
       onSubmitCommand: handlers.onSubmitCommand,
+      isSubmittingCommand: state.isSubmittingCommand,
     })
   }
 
@@ -350,6 +358,7 @@ function renderVelaShell(root, state, handlers) {
     renderCommandBar(state.mission, {
       onSubmitCommand: handlers.onSubmitCommand,
       onSelectPermissionMode: handlers.onSelectPermissionMode,
+      isSubmittingCommand: state.isSubmittingCommand,
     }),
     renderMissionRail({
       activeView: state.activeView,

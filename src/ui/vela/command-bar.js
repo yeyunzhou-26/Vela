@@ -3,9 +3,11 @@ import { zh, zhOnly } from './locale.js'
 
 const PERMISSION_MODES = ['Plan', 'Assist', 'Act', 'Auto']
 
-export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionMode } = {}) {
+export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionMode, isSubmittingCommand = false } = {}) {
   const bar = document.createElement('header')
   bar.className = 'top-command-bar'
+  const disabledAttr = isSubmittingCommand ? ' disabled' : ''
+  const commandPlaceholder = isSubmittingCommand ? 'Vela is working' : 'Command or search the current mission'
   bar.innerHTML = `
     <div class="brand-lockup" aria-label="Vela">
       <span class="brand-mark" aria-hidden="true">V</span>
@@ -15,9 +17,9 @@ export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionM
       <span class="caption">${escapeHtml(zh('Active mission'))}</span>
       <strong>${escapeHtml(zh(mission.title))}</strong>
     </div>
-    <form class="command-search" aria-label="${escapeHtml(zh('Global mission command'))}">
+    <form class="command-search" aria-label="${escapeHtml(zh('Global mission command'))}" aria-busy="${isSubmittingCommand ? 'true' : 'false'}">
       <span class="search-glyph" aria-hidden="true">/</span>
-      <input type="search" aria-label="${escapeHtml(zh('Command or search the current mission'))}" placeholder="${escapeHtml(zh('Command or search the current mission'))}">
+      <input type="search" aria-label="${escapeHtml(zh('Command or search the current mission'))}" placeholder="${escapeHtml(zh(commandPlaceholder))}"${disabledAttr}>
     </form>
     <div class="status-strip" aria-label="${escapeHtml(zh('Runtime status'))}">
       <span class="status-pill">${escapeHtml(zh(mission.modelStatus))}</span>
@@ -31,6 +33,7 @@ export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionM
               aria-pressed="${selected ? 'true' : 'false'}"
               data-permission-mode="${escapeHtml(mode)}"
               title="${escapeHtml(zh(mode))}"
+              ${disabledAttr}
             >${escapeHtml(zhOnly(mode))}</button>
           `
         }).join('')}
@@ -40,6 +43,7 @@ export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionM
   `
   bar.querySelector('.command-search')?.addEventListener('submit', (event) => {
     event.preventDefault()
+    if (isSubmittingCommand) return
     const input = bar.querySelector('.command-search input')
     const value = input?.value || ''
     Promise.resolve(onSubmitCommand?.(value)).catch(() => {})

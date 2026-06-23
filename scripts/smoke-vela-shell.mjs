@@ -913,9 +913,53 @@ try {
   await page.click('.workspace-mode-tab[data-workspace-mode="plan"]')
   await page.waitForFunction(() => document.querySelector('.workspace-mode-tab[data-workspace-mode="plan"]')?.getAttribute('aria-selected') === 'true')
 
+  let releaseDelayedCommand = null
+  let resolveDelayedCommandStarted = null
+  const delayedCommandStarted = new Promise((resolve, reject) => {
+    resolveDelayedCommandStarted = resolve
+    setTimeout(() => reject(new Error('delayed mission command route was not reached')), 2000)
+  })
+  await page.route('**/vela/mission/commands', async route => {
+    if (!releaseDelayedCommand) {
+      const releasePromise = new Promise(resolve => {
+        releaseDelayedCommand = resolve
+      })
+      resolveDelayedCommandStarted()
+      await releasePromise
+    }
+    await route.continue()
+  })
   await page.fill('.command-search input', '继续')
   await page.press('.command-search input', 'Enter')
+  await delayedCommandStarted
+  await page.waitForFunction(expected => {
+    const commandInput = document.querySelector('.command-search input')
+    const missionInput = document.querySelector('.mission-input input')
+    const missionButton = document.querySelector('.mission-input button')
+    const stepButton = document.querySelector('.step-action')
+    return commandInput?.disabled
+      && missionInput?.disabled
+      && missionButton?.disabled
+      && stepButton?.disabled
+      && missionButton?.textContent?.includes(expected)
+      && stepButton?.textContent?.includes(expected)
+  }, zh('Working'))
+  const submittingCommandSnapshot = await page.evaluate(() => ({
+    commandBusy: document.querySelector('.command-search')?.getAttribute('aria-busy') || '',
+    missionBusy: document.querySelector('.mission-input')?.getAttribute('aria-busy') || '',
+    commandDisabled: document.querySelector('.command-search input')?.disabled || false,
+    missionInputDisabled: document.querySelector('.mission-input input')?.disabled || false,
+    missionButtonDisabled: document.querySelector('.mission-input button')?.disabled || false,
+    stepButtonDisabled: document.querySelector('.step-action')?.disabled || false,
+  }))
+  if (submittingCommandSnapshot.commandBusy !== 'true') throw new Error('top command did not expose busy state while submitting')
+  if (submittingCommandSnapshot.missionBusy !== 'true') throw new Error('mission input did not expose busy state while submitting')
+  if (!submittingCommandSnapshot.commandDisabled || !submittingCommandSnapshot.missionInputDisabled || !submittingCommandSnapshot.missionButtonDisabled || !submittingCommandSnapshot.stepButtonDisabled) {
+    throw new Error(`mission command controls were not disabled while submitting: ${JSON.stringify(submittingCommandSnapshot)}`)
+  }
+  releaseDelayedCommand()
   await page.waitForFunction(expected => document.querySelector('.state-chip')?.textContent?.includes(expected), zh('Running'))
+  await page.unroute('**/vela/mission/commands')
   const topCommandSnapshot = await page.evaluate(() => ({
     collapsed: document.querySelector('.intelligence-spine')?.dataset.collapsed,
     title: document.querySelector('.mission-workspace h1')?.textContent || '',
