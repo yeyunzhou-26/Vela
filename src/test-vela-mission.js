@@ -2043,6 +2043,39 @@ try {
   assert(desktopStages.some(item => item.toolName === 'desktop.screen-context' && item.url === 'screen://mock/current-app'), 'desktop command records mocked screen-context stage')
   assert(desktopStages.some(item => item.toolName === 'desktop.real-adapter' && item.result === 'skipped'), 'desktop command records skipped real-adapter stage')
   assert(desktopStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'desktop command records skipped external-effect stage')
+  const desktopFollowupCredentialFile = path.join(tmp, 'wechat-ilink-followup-credentials.json')
+  wechatIlinkAdapter.saveWechatIlinkCredentials({
+    token: 'followup-token-1234567890',
+    accountId: 'followup-account-1234567890',
+    defaultRecipientUserId: 'wife-followup-user',
+  }, { filePath: desktopFollowupCredentialFile, savedAt: '2026-06-23T00:00:00.000Z' })
+  const desktopContextFollowup = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '看看最近消息',
+    source: 'test-command',
+    wechatIlinkReadDeps: {
+      filePath: desktopFollowupCredentialFile,
+      mockMessages: [{
+        from_user_id: 'wife-followup-user',
+        context_token: 'ctx-followup-read',
+        item_list: [{ type: 1, text_item: { text: '今晚几点回家？' } }],
+      }],
+      env: {},
+    },
+  })
+  assert(desktopContextFollowup.id === desktopCommandReviewing.id, 'desktop follow-up keeps the current app mission')
+  assert(desktopContextFollowup.state === 'Reviewing', 'desktop follow-up keeps the result in review instead of starting over')
+  assert(desktopContextFollowup.toolCalls.at(-1).toolName === 'desktop.app-control.read-context', 'desktop follow-up records app context read tool')
+  assert(desktopContextFollowup.artifacts.at(-1).title === '微信最近消息', 'desktop follow-up creates recent message artifact')
+  assert(desktopContextFollowup.artifacts.at(-1).summary.includes('今晚几点回家？'), 'desktop follow-up summarizes recent WeChat message')
+  assert(desktopContextFollowup.reviewChecks.at(-1).title === '应用上下文复核', 'desktop follow-up creates app context review')
+  assert(desktopContextFollowup.reviewChecks.at(-1).outcome === 'passed', 'desktop follow-up review passes')
+  assert(desktopContextFollowup.reviewChecks.at(-1).evidence.some(item => item.includes('微信消息数量：1')), 'desktop follow-up keeps WeChat read evidence')
+  assert(desktopContextFollowup.nextStep.includes('帮我草拟回复'), 'desktop follow-up proposes drafting without sending')
+  assert(!desktopContextFollowup.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'desktop follow-up does not send messages')
+  const desktopFollowupToolId = desktopContextFollowup.toolCalls.at(-1).id
+  const desktopFollowupStages = desktopContextFollowup.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === desktopFollowupToolId)
+  assert(desktopFollowupStages.some(item => item.toolName === 'wechat-ilink.messages.read-recent'), 'desktop follow-up records WeChat recent read stage')
+  assert(desktopFollowupStages.some(item => item.toolName === 'desktop.external-effect' && item.result === 'skipped'), 'desktop follow-up records skipped external effect')
 
   const wechatLoginMission = runtime.applyCurrentMissionCommand({
     text: '连接微信',
