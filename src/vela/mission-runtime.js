@@ -1678,7 +1678,7 @@ function externalMessagePlanAfterContextBlocked(plan = []) {
 }
 
 function appendExternalMessageDesktopContext(mission = {}, options = {}) {
-  if (hasExternalMessageDesktopContext(mission)) return getCurrentMission()
+  if (!options.force && hasExternalMessageDesktopContext(mission)) return getCurrentMission()
   const planStepId = 'inspect-context'
   const toolCallId = makeId('tool-desktop-app-control-inspect')
   const artifactId = makeId('artifact-desktop-context')
@@ -1797,6 +1797,23 @@ function appendExternalMessageDesktopContext(mission = {}, options = {}) {
       `Guard：${payload.guardrail}`,
     ],
   })
+}
+
+function resolveWechatContextRecoveryActions(mission = {}) {
+  let next = mission
+  const actions = normalizeArray(mission.recoveryActions).filter(action => {
+    const summary = `${asText(action?.title)} ${asText(action?.summary || action?.detail)}`
+    return !/^(done|closed|resolved)$/i.test(asText(action?.status, 'open'))
+      && /(?:微信 iLink|wechat ilink|读取上下文)/i.test(summary)
+  })
+  for (const action of actions) {
+    next = updateCurrentMissionRecoveryAction(action.id, {
+      status: 'resolved',
+      summary: asText(action.summary || action.detail, '微信上下文恢复动作已处理。'),
+      nextStep: next.nextStep,
+    })
+  }
+  return next
 }
 
 function advanceExternalMessagePlanToConfirm(plan = []) {
@@ -2008,7 +2025,10 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     plan: advanceExternalMessagePlanToConfirm(current.plan),
     agentActions: [...normalizeArray(current.agentActions), action],
   })
-  appendExternalMessageDesktopContext(current, { contextResult })
+  appendExternalMessageDesktopContext(current, {
+    contextResult,
+    force: current.state === 'Blocked' && contextResult?.adapterId === 'wechat-ilink',
+  })
   appendCurrentMissionArtifact({
     title: '拟发送内容',
     kind: 'draft',
@@ -2016,7 +2036,7 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     summary: `${summary} ${payloadSummary}`,
     planStepId: 'draft-reply',
   })
-  return appendCurrentMissionPermission({
+  const next = appendCurrentMissionPermission({
     action: nextStep,
     risk: 'External message',
     decision: 'requested',
@@ -2028,6 +2048,9 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     scope: `external://messages/${encodeURIComponent(payload.channel)}/${encodeURIComponent(payload.recipient)}`,
     screenContext: input.screenContext,
   })
+  return current.state === 'Blocked' && contextResult?.adapterId === 'wechat-ilink'
+    ? resolveWechatContextRecoveryActions(next)
+    : next
 }
 
 export function normalizeMission(value = {}) {
@@ -2960,6 +2983,11 @@ export async function applyCurrentMissionCommandWithAdapters(input = {}) {
   if (!capabilityAdapterResult && (isContinue || WECHAT_QR_SCAN_STATUS_RE.test(text))) {
     const current = getCurrentMission()
     if (isContinue && current.state === 'Planned' && isExternalMessageMission(current)) {
+      const contextResult = await readWechatContextForExternalMessage(current, input)
+      appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+      return advanceExternalMessageMissionByCommand(current, input, text, { contextResult })
+    }
+    if (isContinue && current.state === 'Blocked' && isExternalMessageMission(current)) {
       const contextResult = await readWechatContextForExternalMessage(current, input)
       appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
       return advanceExternalMessageMissionByCommand(current, input, text, { contextResult })

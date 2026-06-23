@@ -2359,6 +2359,43 @@ try {
   assert(missingWechatContextDraft.reviewChecks.some(item => item.title === '桌面上下文复核' && item.outcome === 'blocked'), 'external message missing WeChat context records blocked review')
   assert(!missingWechatContextDraft.permissions.some(item => item.risk === 'External message' && runtime.isPendingPermissionDecision(item.decision)), 'external message missing WeChat context does not request send approval')
   assert(!missingWechatContextDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message missing WeChat context does not send')
+  let recoveredWechatReadCalled = false
+  const recoveredWechatContextDraft = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    wechatIlinkReadDeps: {
+      allowRead: true,
+      filePath: wechatCredentialFile,
+      clientModule: {
+        ApiClient: class {
+          async getUpdates() {
+            recoveredWechatReadCalled = true
+            return {
+              get_updates_buf: 'runtime-sync-after-recovery',
+              msgs: [{
+                from_user_id: 'runtime-default-user',
+                context_token: 'runtime-context-token-recovered',
+                item_list: [{ type: 1, text_item: { text: '我到楼下了。' } }],
+              }],
+            }
+          }
+        },
+        WeChatClient: {
+          extractText(message) {
+            return message.item_list?.[0]?.text_item?.text || ''
+          },
+        },
+      },
+    },
+  })
+  assert(recoveredWechatReadCalled === true, 'external message retry after recovery reruns WeChat context read')
+  assert(recoveredWechatContextDraft.state === 'Waiting for permission', 'external message retry after recovery waits for send confirmation')
+  assert(recoveredWechatContextDraft.nextStep.includes('这样发可以吗'), 'external message retry after recovery asks for send confirmation')
+  assert(recoveredWechatContextDraft.recoveryActions.some(item => item.title.includes('连接微信 iLink') && item.status === 'resolved'), 'external message retry after recovery resolves connection recovery action')
+  assert(recoveredWechatContextDraft.artifacts.some(item => item.title === '微信上下文摘要' && item.summary.includes('我到楼下了。')), 'external message retry after recovery records fresh context artifact')
+  assert(recoveredWechatContextDraft.artifacts.some(item => item.metadata?.contextToken === 'runtime-context-token-recovered'), 'external message retry after recovery stores fresh context token')
+  assert(recoveredWechatContextDraft.permissions.some(item => item.risk === 'External message' && runtime.isPendingPermissionDecision(item.decision)), 'external message retry after recovery requests send approval')
+  assert(!recoveredWechatContextDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message retry after recovery does not send before approval')
 
   runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
