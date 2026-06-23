@@ -32,6 +32,13 @@ function latestArtifact(mission = {}) {
   return lastOf(mission.artifacts)
 }
 
+function latestWechatContextArtifact(mission = {}) {
+  return [...asArray(mission.artifacts)].reverse().find(artifact => (
+    artifact?.metadata?.adapterId === 'wechat-ilink'
+    || /微信上下文摘要|wechat context/i.test(text(artifact?.title))
+  )) || null
+}
+
 function looksLikeExternalMessageIntent(value) {
   return /(?:wechat|微信|老婆|妻子|太太|媳妇|老公|先生|reply|message|回复|回个|发消息|发信息|发微信|发送)/i.test(text(value))
 }
@@ -166,6 +173,20 @@ function buildPermissionDetail(permission = {}) {
   ].filter(Boolean).join(' · ') || zh('Review this request before Vela continues.')
 }
 
+function extractQuotedText(value = '') {
+  const source = text(value)
+  return source.match(/内容[:：]?[「"]([^」"]+)[」"]/)?.[1]
+    || source.match(/我准备这样回[:：]?[「"]([^」"]+)[」"]/)?.[1]
+    || ''
+}
+
+function extractWechatContextLine(artifact = {}) {
+  const summary = text(artifact?.summary || artifact?.detail)
+  return summary.match(/最近消息[:：]([^；。]+)/)?.[1]
+    || summary.match(/最近消息[:：](.+?)(?:；没有发送消息|；没有发送|。|$)/)?.[1]
+    || ''
+}
+
 function missionAttention(mission = {}) {
   const permission = latestPendingPermission(mission.permissions)
   if (permission) {
@@ -213,7 +234,7 @@ function missionAttention(mission = {}) {
       secondaryLabel: recoveryAction.source === 'review_blocked' ? 'Open Review' : 'Open Guard',
       caption: 'Recovery needed',
       title: text(recoveryAction.title || recoveryAction.label, 'Recovery action pending'),
-      detail: zh('Open the spine to inspect recovery evidence.'),
+      detail: text(recoveryAction.summary || recoveryAction.detail, 'Open the spine to inspect recovery evidence.'),
       recoveryAction,
     }
   }
@@ -286,16 +307,25 @@ function assistantReplyForMission(mission = {}, attention = null) {
   const value = text(input?.text || mission.title)
   if (attention?.kind === 'guard') {
     if (isExternalMessagePermission(attention.permission)) {
-      const draft = text(attention.permission?.summary || attention.title, '我准备好了回复草稿。')
-      return `${draft} 这样发可以吗？`
+      const draftText = extractQuotedText(attention.permission?.summary || attention.title)
+      const contextLine = extractWechatContextLine(latestWechatContextArtifact(mission))
+      const contextPrefix = contextLine ? `我看到了：${contextLine}。` : '我已经整理好上下文。'
+      const draft = draftText ? `我准备这样回：「${draftText}」。` : '我准备好了回复草稿。'
+      return `${contextPrefix}${draft}这样发可以吗？`
     }
     return '我已经准备好下一步了。这个动作会影响外部世界，所以先把要做的事给你确认。'
   }
   if (attention?.kind === 'review') {
     return '我先把结果卡住，等后台复核通过再算完成。你不用看细节，必要时我会直接告诉你缺什么。'
   }
+  if (attention?.kind === 'recovery') {
+    return `${text(attention.title, '这一步卡住了')}。${text(attention.detail, '我会告诉你下一步怎么恢复。')}`
+  }
   if (mission.state === 'Waiting for user') {
     return '我停在这里，等你一句话继续、修改，或者换个方向。'
+  }
+  if (mission.state === 'Blocked') {
+    return '这一步卡住了。我已经把恢复办法放在当前任务里，你按下一步处理就行。'
   }
   if (looksLikeExternalMessageIntent(value)) {
     return '好的，我先去看一下。拿到上下文后，我会把准备发送的内容给你确认。'
@@ -360,16 +390,16 @@ function renderPlanCanvas(mission, plan) {
         </div>
       </div>
       <div class="assistant-thread">
-        <article class="chat-bubble assistant">
-          <span>${escapeHtml(zh('Vela'))}</span>
-          <p>${escapeHtml(assistantReplyForMission(mission, attention))}</p>
-        </article>
         ${userText ? `
           <article class="chat-bubble user">
             <span>${escapeHtml(zh('You'))}</span>
             <p>${escapeHtml(zh(userText))}</p>
           </article>
         ` : ''}
+        <article class="chat-bubble assistant">
+          <span>${escapeHtml(zh('Vela'))}</span>
+          <p>${escapeHtml(assistantReplyForMission(mission, attention))}</p>
+        </article>
         <article class="chat-bubble assistant current">
           <span>${escapeHtml(zh('Current focus'))}</span>
           <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
