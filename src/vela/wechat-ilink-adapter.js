@@ -243,6 +243,21 @@ function normalizeQrCodeResponse(value = {}) {
   }
 }
 
+function normalizeQrStatusResponse(value = {}) {
+  const credentials = normalizeWechatIlinkCredentials({
+    token: value.bot_token || value.botToken || value.token,
+    accountId: value.ilink_bot_id || value.accountId || value.ilinkBotId,
+    baseUrl: value.baseurl || value.baseUrl,
+    defaultRecipientUserId: value.ilink_user_id || value.defaultRecipientUserId || value.userId,
+    source: 'qr-login',
+  })
+  return {
+    status: asText(value.status, 'unknown'),
+    credentials,
+    redactedCredentials: redactWechatIlinkCredentials(credentials),
+  }
+}
+
 function qrSessionBase(request = {}, patch = {}) {
   const now = asText(patch.createdAt, new Date().toISOString())
   return {
@@ -340,6 +355,102 @@ export async function startWechatIlinkQrLoginSession(options = {}) {
   }
 }
 
+export async function pollWechatIlinkQrLoginStatus(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
+  const qrCodeId = asText(options.qrCodeId || options.qrcode || options.qrCode)
+  const request = prepareWechatIlinkLoginRequest({ ...options, env })
+  const base = {
+    adapterId: 'wechat-ilink',
+    action: 'wechat-ilink.qr-login.poll',
+    risk: 'Credential',
+    packageAvailable: Boolean(request.packageAvailable),
+    packagePath: asText(request.packagePath),
+    credentialStorePath: asText(request.credentialStorePath),
+    botType: asText(request.botType, DEFAULT_WECHAT_ILINK_BOT_TYPE),
+    baseUrl: asText(request.baseUrl, 'https://ilinkai.weixin.qq.com'),
+    realQrLoginEnabled: request.realQrLoginEnabled === true,
+    executionMode: 'simulated',
+    status: 'waiting-for-network-enable',
+    qrCodeId,
+    credentialsReady: false,
+    tokenSaved: false,
+    messageSent: false,
+    redactedCredentials: redactWechatIlinkCredentials({}),
+    reason: '真实二维码状态轮询未启用。',
+    nextAction: 'enable-real-login-after-user-confirmation',
+    createdAt: asText(options.createdAt, new Date().toISOString()),
+  }
+
+  if (!qrCodeId) {
+    return {
+      ...base,
+      status: 'blocked',
+      reason: '缺少二维码 ID，无法轮询微信登录状态。',
+      nextAction: 'request-new-qr-code',
+    }
+  }
+
+  if (!request.packageAvailable) {
+    return {
+      ...base,
+      executionMode: 'unavailable',
+      status: 'blocked',
+      reason: '未安装 wechat-ilink-client，无法轮询微信登录状态。',
+      nextAction: 'install-wechat-ilink-client',
+    }
+  }
+
+  if (!request.realQrLoginEnabled) {
+    return {
+      ...base,
+      reason: `真实二维码状态轮询未启用；设置 ${WECHAT_ILINK_ENV.enableRealLogin}=1 或传入 allowNetwork=true 后才会调用 ApiClient.pollQRCodeStatus。`,
+    }
+  }
+
+  try {
+    const clientModule = options.clientModule || await import('wechat-ilink-client')
+    const ApiClient = options.ApiClient || clientModule.ApiClient
+    if (typeof ApiClient !== 'function' && !options.apiClient) {
+      return {
+        ...base,
+        executionMode: 'live',
+        status: 'blocked',
+        reason: 'wechat-ilink-client 没有导出 ApiClient，无法轮询二维码状态。',
+        nextAction: 'verify-wechat-ilink-client-package',
+      }
+    }
+    const api = options.apiClient || new ApiClient({
+      baseUrl: request.baseUrl,
+      routeTag: envValue(env, WECHAT_ILINK_ENV.routeTag),
+    })
+    const rawStatus = await api.pollQRCodeStatus(qrCodeId)
+    const normalized = normalizeQrStatusResponse(rawStatus)
+    const credentialsReady = normalized.status === 'confirmed'
+      && Boolean(normalized.credentials.token)
+      && Boolean(normalized.credentials.accountId)
+    return {
+      ...base,
+      executionMode: 'live',
+      status: normalized.status,
+      credentialsReady,
+      credentials: credentialsReady ? normalized.credentials : normalizeWechatIlinkCredentials({}),
+      redactedCredentials: credentialsReady ? normalized.redactedCredentials : redactWechatIlinkCredentials({}),
+      reason: credentialsReady
+        ? '微信扫码已确认；凭据只在内存结果中返回，尚未保存。'
+        : `微信扫码状态：${normalized.status}；尚未保存凭据。`,
+      nextAction: credentialsReady ? 'request-credential-save-confirmation' : 'poll-again-or-refresh-qr',
+    }
+  } catch (err) {
+    return {
+      ...base,
+      executionMode: 'live',
+      status: 'failed',
+      reason: `轮询微信登录状态失败：${asText(err?.message, 'unknown error')}`,
+      nextAction: 'retry-qr-status-poll',
+    }
+  }
+}
+
 export function wechatIlinkQrSessionEvidence(session = {}) {
   return [
     `二维码状态：${asText(session.status, 'unknown')}`,
@@ -350,5 +461,17 @@ export function wechatIlinkQrSessionEvidence(session = {}) {
     `凭据保存：${session.tokenSaved ? 'yes' : 'no'}`,
     `消息发送：${session.messageSent ? 'yes' : 'no'}`,
     `下一步：${asText(session.nextAction)}`,
+  ]
+}
+
+export function wechatIlinkQrStatusEvidence(status = {}) {
+  return [
+    `扫码状态：${asText(status.status, 'unknown')}`,
+    `扫码执行模式：${asText(status.executionMode, 'simulated')}`,
+    `二维码 ID：${status.qrCodeId ? 'present' : 'none'}`,
+    `凭据就绪：${status.credentialsReady ? 'yes' : 'no'}`,
+    `凭据保存：${status.tokenSaved ? 'yes' : 'no'}`,
+    `消息发送：${status.messageSent ? 'yes' : 'no'}`,
+    `下一步：${asText(status.nextAction)}`,
   ]
 }

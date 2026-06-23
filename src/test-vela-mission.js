@@ -107,6 +107,58 @@ try {
   assert(liveWechatQrSession.tokenSaved === false, 'WeChat iLink QR URL generation still does not save credentials')
   assert(liveWechatQrSession.messageSent === false, 'WeChat iLink QR URL generation still does not send messages')
   assert(wechatIlinkAdapter.wechatIlinkQrSessionEvidence(liveWechatQrSession).some(item => item.includes('二维码状态：qr-ready')), 'WeChat iLink QR evidence records ready status')
+  const dryWechatQrStatus = await wechatIlinkAdapter.pollWechatIlinkQrLoginStatus({
+    qrCodeId: 'qr-session-123',
+    filePath: wechatCredentialFile,
+    env: {},
+  })
+  assert(dryWechatQrStatus.status === 'waiting-for-network-enable', 'WeChat iLink QR status does not poll network by default')
+  assert(dryWechatQrStatus.tokenSaved === false, 'WeChat iLink QR status does not save credentials by default')
+  const missingQrStatus = await wechatIlinkAdapter.pollWechatIlinkQrLoginStatus({
+    allowNetwork: true,
+    env: {},
+  })
+  assert(missingQrStatus.status === 'blocked', 'WeChat iLink QR status requires QR id')
+  const scannedQrStatus = await wechatIlinkAdapter.pollWechatIlinkQrLoginStatus({
+    qrCodeId: 'qr-session-123',
+    allowNetwork: true,
+    clientModule: {
+      ApiClient: class {
+        async pollQRCodeStatus(qrcode) {
+          return { status: qrcode === 'qr-session-123' ? 'scaned' : 'wait' }
+        }
+      },
+    },
+    env: {},
+  })
+  assert(scannedQrStatus.status === 'scaned', 'WeChat iLink QR status records scanned state')
+  assert(scannedQrStatus.credentialsReady === false, 'WeChat iLink scanned status does not expose credentials yet')
+  assert(scannedQrStatus.tokenSaved === false, 'WeChat iLink scanned status does not save credentials')
+  const confirmedQrStatus = await wechatIlinkAdapter.pollWechatIlinkQrLoginStatus({
+    qrCodeId: 'qr-session-123',
+    allowNetwork: true,
+    clientModule: {
+      ApiClient: class {
+        async pollQRCodeStatus() {
+          return {
+            status: 'confirmed',
+            bot_token: 'confirmed-token-123456',
+            ilink_bot_id: 'confirmed-account@im.bot',
+            baseurl: 'https://ilink-confirmed.example.test',
+            ilink_user_id: 'confirmed-user-123',
+          }
+        }
+      },
+    },
+    env: {},
+  })
+  assert(confirmedQrStatus.status === 'confirmed', 'WeChat iLink QR status records confirmed state')
+  assert(confirmedQrStatus.credentialsReady === true, 'WeChat iLink confirmed status exposes in-memory credentials for next guard')
+  assert(confirmedQrStatus.credentials.token === 'confirmed-token-123456', 'WeChat iLink confirmed status keeps token in adapter result')
+  assert(confirmedQrStatus.redactedCredentials.token !== 'confirmed-token-123456', 'WeChat iLink confirmed status redacts token for evidence')
+  assert(confirmedQrStatus.tokenSaved === false, 'WeChat iLink confirmed status still does not save credentials')
+  assert(confirmedQrStatus.messageSent === false, 'WeChat iLink confirmed status still does not send messages')
+  assert(wechatIlinkAdapter.wechatIlinkQrStatusEvidence(confirmedQrStatus).some(item => item.includes('凭据就绪：yes')), 'WeChat iLink QR status evidence records ready credentials')
   const missingQrApiSession = await wechatIlinkAdapter.startWechatIlinkQrLoginSession({
     allowNetwork: true,
     clientModule: {},
