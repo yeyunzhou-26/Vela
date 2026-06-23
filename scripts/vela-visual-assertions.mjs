@@ -96,6 +96,45 @@ export async function assertNoClippedUiText(page, label) {
   }
 }
 
+export async function assertNoOverlappingChatBubbles(page, label) {
+  const overlaps = await page.evaluate(() => {
+    const elements = [...document.querySelectorAll('.chat-bubble')]
+      .filter(element => {
+        const style = window.getComputedStyle(element)
+        const rect = element.getBoundingClientRect()
+        return style.visibility !== 'hidden'
+          && style.display !== 'none'
+          && rect.width > 1
+          && rect.height > 1
+      })
+      .map((element, index) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          index,
+          text: String(element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+        }
+      })
+    const collisions = []
+    for (let i = 0; i < elements.length; i += 1) {
+      for (let j = i + 1; j < elements.length; j += 1) {
+        const a = elements[i]
+        const b = elements[j]
+        const horizontal = a.left < b.right - 2 && a.right > b.left + 2
+        const vertical = a.top < b.bottom - 2 && a.bottom > b.top + 2
+        if (horizontal && vertical) collisions.push({ a, b })
+      }
+    }
+    return collisions
+  })
+  if (overlaps.length) {
+    throw new Error(`${label} has overlapping chat bubbles: ${JSON.stringify(overlaps.slice(0, 3))}`)
+  }
+}
+
 export async function assertFocusedWorkbenchGeometry(page, label) {
   const geometry = await page.evaluate(() => {
     function box(selector) {
@@ -382,6 +421,7 @@ export function assertVisualScreenshot(buffer, expectedWidth, expectedHeight, la
 export async function assertFocusedWorkbenchScreenshot(page, label, screenshotPath, expectedWidth, expectedHeight) {
   await assertNoEnglishShellChrome(page, label)
   await assertNoClippedUiText(page, label)
+  await assertNoOverlappingChatBubbles(page, label)
   await assertFocusedWorkbenchGeometry(page, label)
   assertVisualScreenshot(
     await page.screenshot({ path: screenshotPath }),

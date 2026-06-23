@@ -403,7 +403,7 @@ input {
   min-height: max-content;
   max-width: 880px;
   width: 100%;
-  margin: clamp(24px, 9vh, 82px) auto 0;
+  margin: 10px auto 0;
 }
 
 .chat-bubble {

@@ -34,6 +34,7 @@ const appShell = read('src/ui/vela/app-shell.js')
 const spine = read('src/ui/vela/intelligence-spine.js')
 const workspace = read('src/ui/vela/mission-workspace.js')
 const locale = read('src/ui/vela/locale.js')
+const visualAssertions = read('scripts/vela-visual-assertions.mjs')
 const uiFiles = walkFiles(velaUiRoot)
   .filter(file => /\.(css|js)$/.test(file))
   .map(file => ({
@@ -64,11 +65,14 @@ assert(workspace.includes('assistant-canvas'), 'Mission Workspace defaults to a 
 assert(workspace.includes('assistant-process-switcher'), 'Mission Workspace keeps process details secondary')
 assert(workspace.includes("zh('Tell Vela what to do')"), 'Mission input is phrased as a natural assistant composer')
 assert(workspace.includes('quick-command'), 'Mission Workspace offers natural one-click chat commands on the empty screen')
+assert(workspace.includes('assistantThreadTurns'), 'Mission Workspace synthesizes multi-step mission state into chat turns')
+assert(workspace.includes('latestSendReceiptArtifact'), 'Mission Workspace can show confirmed external-send receipts in the chat flow')
 
 assert(locale.includes("'Mission Workspace': '任务工作区'"), 'locale localizes Mission Workspace')
 assert(locale.includes("'Vela Assistant': 'Vela 助手'"), 'locale localizes the chat-first assistant shell')
 assert(locale.includes("'Permission blocked': '许可已阻断'"), 'locale localizes permission blocked state')
 assert(locale.includes("'Vela Voice Layer': 'Vela 语音层'"), 'locale localizes voice layer')
+assert(visualAssertions.includes('assertNoOverlappingChatBubbles'), 'visual assertions catch overlapping chat bubbles')
 
 const brainAssetReferences = uiFiles
   .filter(item => /\/src\/ui\/brain-ui\/|src\/ui\/brain-ui|from ['"][^'"]*brain-ui|import\([^)]*brain-ui/.test(item.text))

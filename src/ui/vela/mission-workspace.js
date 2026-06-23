@@ -41,7 +41,7 @@ function latestArtifact(mission = {}) {
 function latestWechatContextArtifact(mission = {}) {
   return [...asArray(mission.artifacts)].reverse().find(artifact => (
     artifact?.metadata?.adapterId === 'wechat-ilink'
-    || /微信上下文摘要|wechat context/i.test(text(artifact?.title))
+    || /微信上下文摘要|微信最近消息|wechat context|recent messages/i.test(text(artifact?.title))
   )) || null
 }
 
@@ -192,6 +192,138 @@ function extractWechatContextLine(artifact = {}) {
     || summary.match(/最近消息[:：]([^；。]+)/)?.[1]
     || summary.match(/最近消息[:：](.+?)(?:；没有发送消息|；没有发送|。|$)/)?.[1]
     || ''
+}
+
+function isContinueLike(value) {
+  return /^(?:继续|下一步|运行|恢复|continue|resume|run)$/i.test(text(value))
+}
+
+function isApprovalLike(value) {
+  return /^(?:可以|好|好的|确认|发送|发吧|同意|approve|approved|send|ok)$/i.test(text(value))
+}
+
+function isContextReadRequest(value) {
+  return /(?:看看|看一下|查看|读一下|读取|检查|最近消息|聊天记录|对话上下文|recent messages|check messages)/i.test(text(value))
+}
+
+function isGenericDraftRequest(value) {
+  const source = text(value)
+  if (externalMessageDirectReplyLike(source)) return false
+  return /(?:草拟|拟|写|生成|准备).*(?:回复|回信|消息)|(?:帮我回复|替我回复|怎么回|如何回复|回什么|回复一下|回一下)/i.test(source)
+}
+
+function externalMessageDirectReplyLike(value) {
+  return /(?:给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公)|发(?:给)?(?:她|他|对方|老婆|老公))\s*[:：]\s*.+/.test(text(value))
+}
+
+function latestExternalMessageDraftArtifact(mission = {}) {
+  return [...asArray(mission.artifacts)].reverse().find(artifact => (
+    text(artifact?.title) === '拟发送内容'
+    || (text(artifact?.kind || artifact?.type) === 'draft' && text(artifact?.planStepId) === 'draft-reply')
+    || /我准备这样回|拟发送内容|消息草稿/.test(text(artifact?.summary || artifact?.detail || artifact?.title))
+  )) || null
+}
+
+function latestSendReceiptArtifact(mission = {}) {
+  return [...asArray(mission.artifacts)].reverse().find(artifact => (
+    text(artifact?.kind || artifact?.type) === 'send-receipt'
+    || text(artifact?.title) === '发送回执'
+  )) || null
+}
+
+function draftTextForMission(mission = {}, attention = null) {
+  return extractQuotedText(attention?.permission?.summary || attention?.title)
+    || extractQuotedText(latestExternalMessageDraftArtifact(mission)?.summary)
+}
+
+function sendReceiptText(artifact = {}) {
+  const summary = text(artifact?.summary || artifact?.detail)
+  if (!summary) return ''
+  return summary.replace(/^已按确认记录/, '已按你的确认')
+}
+
+function meaningfulInputs(mission = {}) {
+  return asArray(mission.inputs)
+    .map(input => text(input?.text))
+    .filter(Boolean)
+}
+
+function pushTurn(turns, turn) {
+  const body = text(turn?.body)
+  if (!body) return
+  const last = turns[turns.length - 1]
+  if (last?.role === turn.role && last?.body === body) return
+  turns.push({
+    role: turn.role === 'user' ? 'user' : 'assistant',
+    label: turn.label || (turn.role === 'user' ? 'You' : 'Vela'),
+    body,
+    current: Boolean(turn.current),
+  })
+}
+
+function assistantThreadTurns(mission = {}, attention = null) {
+  const inputs = meaningfulInputs(mission)
+  const firstUserInput = inputs.find(value => !isContinueLike(value)) || inputs[0] || ''
+  if (!isExternalMessageMission(mission)) {
+    const turns = []
+    if (text(firstUserInput)) pushTurn(turns, { role: 'user', label: 'You', body: firstUserInput })
+    pushTurn(turns, { role: 'assistant', label: 'Vela', body: assistantReplyForMission(mission, attention), current: true })
+    return turns
+  }
+
+  const turns = []
+  if (firstUserInput) pushTurn(turns, { role: 'user', label: 'You', body: firstUserInput })
+
+  const contextArtifact = latestWechatContextArtifact(mission)
+  const contextLine = extractWechatContextLine(contextArtifact)
+  const draftText = draftTextForMission(mission, attention)
+  const receiptArtifact = latestSendReceiptArtifact(mission)
+
+  if (!contextArtifact && !draftText && !receiptArtifact) {
+    pushTurn(turns, { role: 'assistant', label: 'Vela', body: '好的，我去看一下。拿到上下文后，我会先告诉你准备怎么回。', current: true })
+    return turns
+  }
+
+  if (contextArtifact) {
+    pushTurn(turns, {
+      role: 'assistant',
+      label: 'Vela',
+      body: contextLine ? `我看到了最近消息：${contextLine}` : text(contextArtifact.summary, '我已经整理好最近消息上下文。'),
+    })
+  }
+
+  for (const value of inputs.slice(firstUserInput ? inputs.indexOf(firstUserInput) + 1 : 0)) {
+    if (!value || isContinueLike(value)) continue
+    if (isContextReadRequest(value)) continue
+    if (isGenericDraftRequest(value)) continue
+    if (isApprovalLike(value) && !receiptArtifact) continue
+    pushTurn(turns, { role: 'user', label: 'You', body: value })
+  }
+
+  if (draftText && !receiptArtifact) {
+    pushTurn(turns, {
+      role: 'assistant',
+      label: 'Vela',
+      body: contextLine
+        ? `我准备这样回：「${draftText}」。这样发可以吗？`
+        : assistantReplyForMission(mission, attention),
+      current: true,
+    })
+    return turns
+  }
+
+  if (receiptArtifact) {
+    pushTurn(turns, {
+      role: 'assistant',
+      label: 'Vela',
+      body: sendReceiptText(receiptArtifact) || assistantReplyForMission(mission, attention),
+      current: true,
+    })
+    return turns
+  }
+
+  pushTurn(turns, { role: 'assistant', label: 'Vela', body: assistantReplyForMission(mission, attention), current: true })
+  return turns
 }
 
 function missionAttention(mission = {}) {
@@ -401,9 +533,10 @@ function renderQuickCommands(userText, isMissionActionBusy) {
 }
 
 function renderPlanCanvas(mission, plan, { isMissionActionBusy = false } = {}) {
-  const input = latestInput(mission)
   const attention = missionAttention(mission)
-  const userText = text(input?.text)
+  const turns = assistantThreadTurns(mission, attention)
+  const hasUserText = meaningfulInputs(mission).some(value => !isContinueLike(value))
+  const showProcess = turns.length <= 2
   return `
     <div class="assistant-canvas" aria-label="${escapeHtml(zh('Assistant chat'))}">
       <div class="assistant-status">
@@ -414,23 +547,19 @@ function renderPlanCanvas(mission, plan, { isMissionActionBusy = false } = {}) {
         </div>
       </div>
       <div class="assistant-thread">
-        ${userText ? `
-          <article class="chat-bubble user">
-            <span>${escapeHtml(zh('You'))}</span>
-            <p>${escapeHtml(zh(userText))}</p>
+        ${turns.map(turn => `
+          <article class="chat-bubble ${escapeHtml(turn.role)}${turn.current ? ' current' : ''}">
+            <span>${escapeHtml(zh(turn.label))}</span>
+            <p>${escapeHtml(zh(turn.body))}</p>
           </article>
-        ` : ''}
-        <article class="chat-bubble assistant">
-          <span>${escapeHtml(zh('Vela'))}</span>
-          <p>${escapeHtml(assistantReplyForMission(mission, attention))}</p>
-        </article>
+        `).join('')}
       </div>
       <div class="assistant-focus-line">
         <span>${escapeHtml(zh('Current focus'))}</span>
         <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
       </div>
-      ${renderQuickCommands(userText, isMissionActionBusy)}
-      ${renderAssistantProcess(plan, mission)}
+      ${renderQuickCommands(hasUserText ? 'started' : '', isMissionActionBusy)}
+      ${showProcess ? renderAssistantProcess(plan, mission) : ''}
     </div>
   `
 }
