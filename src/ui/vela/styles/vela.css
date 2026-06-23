@@ -357,17 +357,17 @@ input {
   align-content: start;
   gap: 18px;
   min-height: 0;
-  padding: 22px;
+  padding: 24px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg-elevated);
+  background: #15191d;
   overflow: auto;
 }
 
 .assistant-canvas {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   min-height: 100%;
 }
 
@@ -398,11 +398,12 @@ input {
 
 .assistant-thread {
   display: grid;
-  align-content: end;
+  align-content: start;
   gap: 12px;
-  min-height: 220px;
-  max-width: 820px;
+  min-height: max-content;
+  max-width: 880px;
   width: 100%;
+  margin: clamp(24px, 9vh, 82px) auto 0;
 }
 
 .chat-bubble {
@@ -449,11 +450,68 @@ input {
   font-size: 15px;
 }
 
+.assistant-focus-line {
+  display: grid;
+  gap: 5px;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+.assistant-focus-line span {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.assistant-focus-line .mission-goal {
+  max-width: none;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.quick-command-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.quick-command {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(82, 213, 232, 0.32);
+  border-radius: 8px;
+  background: rgba(82, 213, 232, 0.08);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-command:hover,
+.quick-command:focus-visible {
+  border-color: rgba(82, 213, 232, 0.58);
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  outline: none;
+}
+
 .assistant-process {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
@@ -466,7 +524,7 @@ input {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #101417;
+  background: rgba(12, 15, 17, 0.58);
 }
 
 .assistant-process strong {
@@ -909,14 +967,14 @@ input {
 
 .mission-input {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 84px;
-  gap: 8px;
-  height: 48px;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+  height: 54px;
 }
 
 .mission-input input,
 .mission-input button {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: #0c0f11;
   color: var(--text);
@@ -924,7 +982,7 @@ input {
 
 .mission-input input {
   min-width: 0;
-  padding: 0 12px;
+  padding: 0 16px;
   outline: 0;
 }
 

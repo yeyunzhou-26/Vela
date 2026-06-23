@@ -169,7 +169,7 @@ const ZH = {
   'Open the spine to inspect recovery evidence.': '打开右侧脊柱查看恢复证据。',
   'Mission command input': '任务命令输入',
   'Start a mission or ask Vela to continue': '开始任务，或让 Vela 继续',
-  'Tell Vela what to do': '直接告诉 Vela 要帮你办什么',
+  'Tell Vela what to do': '像聊天一样说要办的事',
   'Vela is working': 'Vela 正在处理',
   Working: '处理中',
   'Move to': '推进到',

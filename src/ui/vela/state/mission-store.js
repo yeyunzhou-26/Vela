@@ -12,15 +12,15 @@ export const voiceStates = [
 export const seedMission = {
   id: 'mission-vela-shell',
   title: 'Vela',
-  goal: '直接告诉 Vela 你想办什么。它会在后台整理任务、调用工具、保留证据，并在发送消息、改文件或高风险动作前自然确认。',
+  goal: '像聊天一样告诉 Vela 你想办什么。它会先处理上下文和工具调用，只在发送消息、改文件或高风险动作前向你确认。',
   state: 'Planned',
   permissionMode: 'Assist',
   modelStatus: 'Local runtime',
   activeSurface: 'Mission Plan',
-  nextStep: '直接说一件想办的事，例如：帮我打开微信，给我老婆回个信息。',
+  nextStep: '直接说一件事，例如：帮我打开微信，给我老婆回个信息。',
   plan: [
-    { id: 'describe-mission', label: '说出你想办的事', status: 'Active' },
-    { id: 'work-backstage', label: 'Vela 在后台处理', status: 'Next' },
+    { id: 'describe-mission', label: '说出要办的事', status: 'Active' },
+    { id: 'work-backstage', label: 'Vela 查看上下文并处理', status: 'Next' },
     { id: 'confirm-action', label: '关键动作前确认', status: 'Next' },
   ],
 }

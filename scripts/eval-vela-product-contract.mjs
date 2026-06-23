@@ -63,6 +63,7 @@ assert(workspace.includes('missionAttention(mission)'), 'Mission Workspace surfa
 assert(workspace.includes('assistant-canvas'), 'Mission Workspace defaults to a chat-first assistant canvas')
 assert(workspace.includes('assistant-process-switcher'), 'Mission Workspace keeps process details secondary')
 assert(workspace.includes("zh('Tell Vela what to do')"), 'Mission input is phrased as a natural assistant composer')
+assert(workspace.includes('quick-command'), 'Mission Workspace offers natural one-click chat commands on the empty screen')
 
 assert(locale.includes("'Mission Workspace': '任务工作区'"), 'locale localizes Mission Workspace')
 assert(locale.includes("'Vela Assistant': 'Vela 助手'"), 'locale localizes the chat-first assistant shell')

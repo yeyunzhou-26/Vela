@@ -6,6 +6,12 @@ const WORKSPACE_MODES = [
   { id: 'artifacts', label: 'Artifacts' },
 ]
 
+const QUICK_COMMANDS = [
+  { label: '打开微信', command: '打开微信' },
+  { label: '看最近消息', command: '看看最近消息' },
+  { label: '回她：我马上到', command: '给她回：我马上到' },
+]
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -344,7 +350,7 @@ function assistantReplyForMission(mission = {}, attention = null) {
   if (mission.state === 'Running') {
     return '我正在处理这件事。需要你决定的时候，我会只问关键问题。'
   }
-  return '想让我办什么，直接说就行。'
+  return '你直接说想办的事就行。我会先去看需要的上下文；如果要发送消息、改文件或做高风险动作，我会把最终动作给你确认。'
 }
 
 function assistantStateLabel(mission = {}, attention = null) {
@@ -381,7 +387,20 @@ function renderAssistantProcess(plan, mission = {}) {
   `
 }
 
-function renderPlanCanvas(mission, plan) {
+function renderQuickCommands(userText, isMissionActionBusy) {
+  if (userText || isMissionActionBusy) return ''
+  return `
+    <div class="quick-command-row" aria-label="快捷任务">
+      ${QUICK_COMMANDS.map(item => `
+        <button class="quick-command" type="button" data-quick-command="${escapeHtml(item.command)}">
+          ${escapeHtml(item.label)}
+        </button>
+      `).join('')}
+    </div>
+  `
+}
+
+function renderPlanCanvas(mission, plan, { isMissionActionBusy = false } = {}) {
   const input = latestInput(mission)
   const attention = missionAttention(mission)
   const userText = text(input?.text)
@@ -405,11 +424,12 @@ function renderPlanCanvas(mission, plan) {
           <span>${escapeHtml(zh('Vela'))}</span>
           <p>${escapeHtml(assistantReplyForMission(mission, attention))}</p>
         </article>
-        <article class="chat-bubble assistant current">
-          <span>${escapeHtml(zh('Current focus'))}</span>
-          <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
-        </article>
       </div>
+      <div class="assistant-focus-line">
+        <span>${escapeHtml(zh('Current focus'))}</span>
+        <p class="mission-goal">${escapeHtml(zh(mission.goal))}</p>
+      </div>
+      ${renderQuickCommands(userText, isMissionActionBusy)}
       ${renderAssistantProcess(plan, mission)}
     </div>
   `
@@ -543,7 +563,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     <section class="mission-canvas" aria-label="${escapeHtml(zh('Active work surface'))}">
       ${activeMode === 'artifacts'
         ? renderArtifactCanvas(artifacts, selectedArtifactId, plan)
-        : renderPlanCanvas(mission, plan)}
+        : renderPlanCanvas(mission, plan, { isMissionActionBusy })}
     </section>
 
     ${renderAttentionStrip(attention, { isMissionActionBusy })}
@@ -583,6 +603,12 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
   for (const button of workspace.querySelectorAll('.workspace-mode-tab')) {
     button.addEventListener('click', () => {
       Promise.resolve(onSelectWorkspaceMode?.(button.dataset.workspaceMode)).catch(() => {})
+    })
+  }
+  for (const button of workspace.querySelectorAll('.quick-command')) {
+    button.addEventListener('click', () => {
+      if (isMissionActionBusy) return
+      Promise.resolve(onSubmitCommand?.(button.dataset.quickCommand)).catch(() => {})
     })
   }
   for (const button of workspace.querySelectorAll('.artifact-select')) {

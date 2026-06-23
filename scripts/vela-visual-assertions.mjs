@@ -68,6 +68,7 @@ export async function assertNoClippedUiText(page, label) {
       '.surface-row-action',
       '.surface-review-action',
       '.artifact-review-action',
+      '.quick-command',
       '.mission-list-item strong',
     ]
     return [...document.querySelectorAll(selectors.join(','))]
