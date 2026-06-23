@@ -3,11 +3,11 @@ import { zh, zhOnly } from './locale.js'
 
 const PERMISSION_MODES = ['Plan', 'Assist', 'Act', 'Auto']
 
-export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionMode, isSubmittingCommand = false } = {}) {
+export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionMode, isMissionActionBusy = false } = {}) {
   const bar = document.createElement('header')
   bar.className = 'top-command-bar'
-  const disabledAttr = isSubmittingCommand ? ' disabled' : ''
-  const commandPlaceholder = isSubmittingCommand ? 'Vela is working' : 'Command or search the current mission'
+  const disabledAttr = isMissionActionBusy ? ' disabled' : ''
+  const commandPlaceholder = isMissionActionBusy ? 'Vela is working' : 'Command or search the current mission'
   bar.innerHTML = `
     <div class="brand-lockup" aria-label="Vela">
       <span class="brand-mark" aria-hidden="true">V</span>
@@ -17,7 +17,7 @@ export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionM
       <span class="caption">${escapeHtml(zh('Active mission'))}</span>
       <strong>${escapeHtml(zh(mission.title))}</strong>
     </div>
-    <form class="command-search" aria-label="${escapeHtml(zh('Global mission command'))}" aria-busy="${isSubmittingCommand ? 'true' : 'false'}">
+    <form class="command-search" aria-label="${escapeHtml(zh('Global mission command'))}" aria-busy="${isMissionActionBusy ? 'true' : 'false'}">
       <span class="search-glyph" aria-hidden="true">/</span>
       <input type="search" aria-label="${escapeHtml(zh('Command or search the current mission'))}" placeholder="${escapeHtml(zh(commandPlaceholder))}"${disabledAttr}>
     </form>
@@ -43,7 +43,7 @@ export function renderCommandBar(mission, { onSubmitCommand, onSelectPermissionM
   `
   bar.querySelector('.command-search')?.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (isSubmittingCommand) return
+    if (isMissionActionBusy) return
     const input = bar.querySelector('.command-search input')
     const value = input?.value || ''
     Promise.resolve(onSubmitCommand?.(value)).catch(() => {})

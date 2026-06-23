@@ -1178,8 +1178,36 @@ try {
   }
   await page.click('.spine-tab[data-id="guard"]')
   await page.waitForFunction(() => document.querySelector('.intelligence-spine')?.dataset.collapsed === 'true')
+  let releaseDelayedApproval = null
+  let resolveDelayedApprovalStarted = null
+  const delayedApprovalStarted = new Promise((resolve, reject) => {
+    resolveDelayedApprovalStarted = resolve
+    setTimeout(() => reject(new Error('delayed permission approval route was not reached')), 2000)
+  })
+  await page.route('**/vela/mission/permissions/resolve', async route => {
+    if (!releaseDelayedApproval) {
+      const releasePromise = new Promise(resolve => {
+        releaseDelayedApproval = resolve
+      })
+      resolveDelayedApprovalStarted()
+      await releasePromise
+    }
+    await route.continue()
+  })
   await page.click('.mission-attention-strip [data-attention-action="primary"]')
+  await delayedApprovalStarted
+  await page.waitForFunction(expected => {
+    const primary = document.querySelector('.mission-attention-strip [data-attention-action="primary"]')
+    const commandInput = document.querySelector('.command-search input')
+    const missionInput = document.querySelector('.mission-input input')
+    return primary?.disabled
+      && commandInput?.disabled
+      && missionInput?.disabled
+      && primary?.textContent?.includes(expected)
+  }, zh('Working'))
+  releaseDelayedApproval()
   await page.waitForFunction(expected => document.querySelector('.state-chip')?.textContent?.includes(expected), zh('Running'))
+  await page.unroute('**/vela/mission/permissions/resolve')
   const approvedPermissionSnapshot = await page.evaluate(() => ({
     collapsed: document.querySelector('.intelligence-spine')?.dataset.collapsed,
     voiceState: document.querySelector('.voice-states span.active')?.dataset.stateId || '',

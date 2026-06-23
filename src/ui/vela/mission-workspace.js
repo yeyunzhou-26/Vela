@@ -488,12 +488,12 @@ function renderArtifactCanvas(artifacts, selectedArtifactId, plan) {
   `
 }
 
-function renderAttentionStrip(attention, { isSubmittingCommand = false } = {}) {
+function renderAttentionStrip(attention, { isMissionActionBusy = false } = {}) {
   if (!attention) return ''
   const hasPrimary = attention.primaryAction && attention.primaryLabel
   const hasSecondary = attention.secondaryAction && attention.secondaryLabel
-  const primaryDisabledAttr = isSubmittingCommand ? ' disabled' : ''
-  const primaryLabel = isSubmittingCommand ? 'Working' : attention.primaryLabel
+  const primaryDisabledAttr = isMissionActionBusy ? ' disabled' : ''
+  const primaryLabel = isMissionActionBusy ? 'Working' : attention.primaryLabel
   return `
     <div class="mission-attention-strip" data-attention-kind="${escapeHtml(attention.kind)}" role="status">
       <div class="attention-copy">
@@ -517,15 +517,15 @@ function renderAttentionStrip(attention, { isSubmittingCommand = false } = {}) {
   `
 }
 
-export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand, isSubmittingCommand = false } = {}) {
+export function renderMissionWorkspace(mission, { notice = '', workspaceMode = 'plan', selectedArtifactId = '', onSelectWorkspaceMode, onSelectArtifact, onRequestArtifactReview, onApprovePermission, onResolveReviewCheck, onOpenSpinePanel, onSubmitCommand, isMissionActionBusy = false } = {}) {
   const plan = Array.isArray(mission.plan) ? mission.plan : []
   const artifacts = asArray(mission.artifacts)
   const activeMode = workspaceMode === 'artifacts' ? 'artifacts' : 'plan'
   const guardNotice = String(notice || '').trim()
   const attention = missionAttention(mission)
-  const disabledAttr = isSubmittingCommand ? ' disabled' : ''
-  const actionLabel = isSubmittingCommand ? 'Working' : 'Continue'
-  const sendLabel = isSubmittingCommand ? 'Working' : 'Send'
+  const disabledAttr = isMissionActionBusy ? ' disabled' : ''
+  const actionLabel = isMissionActionBusy ? 'Working' : 'Continue'
+  const sendLabel = isMissionActionBusy ? 'Working' : 'Send'
   const workspace = document.createElement('section')
   workspace.className = 'mission-workspace'
   workspace.setAttribute('aria-label', zh('Mission Workspace'))
@@ -546,7 +546,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
         : renderPlanCanvas(mission, plan)}
     </section>
 
-    ${renderAttentionStrip(attention, { isSubmittingCommand })}
+    ${renderAttentionStrip(attention, { isMissionActionBusy })}
 
     <div class="next-step-strip">
       <div class="next-step-copy">
@@ -563,21 +563,21 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
       </div>
     ` : ''}
 
-    <form class="mission-input" aria-label="${escapeHtml(zh('Mission command input'))}" aria-busy="${isSubmittingCommand ? 'true' : 'false'}">
+    <form class="mission-input" aria-label="${escapeHtml(zh('Mission command input'))}" aria-busy="${isMissionActionBusy ? 'true' : 'false'}">
       <input type="text" placeholder="${escapeHtml(zh('Tell Vela what to do'))}"${disabledAttr}>
       <button type="submit"${disabledAttr}>${escapeHtml(zh(sendLabel))}</button>
     </form>
   `
   workspace.querySelector('.mission-input')?.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (isSubmittingCommand) return
+    if (isMissionActionBusy) return
     const input = workspace.querySelector('.mission-input input')
     const value = input?.value || ''
     Promise.resolve(onSubmitCommand?.(value)).catch(() => {})
     if (input) input.value = ''
   })
   workspace.querySelector('.step-action')?.addEventListener('click', () => {
-    if (isSubmittingCommand) return
+    if (isMissionActionBusy) return
     Promise.resolve(onSubmitCommand?.('继续')).catch(() => {})
   })
   for (const button of workspace.querySelectorAll('.workspace-mode-tab')) {
@@ -598,7 +598,7 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
     })
   }
   workspace.querySelector('[data-attention-action="primary"]')?.addEventListener('click', () => {
-    if (isSubmittingCommand) return
+    if (isMissionActionBusy) return
     if (attention?.primaryAction === 'approve-permission') {
       Promise.resolve(onApprovePermission?.(attention.permission)).catch(() => {})
     } else if (attention?.primaryAction === 'resolve-review-check') {

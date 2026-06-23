@@ -64,7 +64,7 @@ function mountVelaShell(root) {
     selectedArtifactId: '',
     voiceState: 'Idle',
     voiceNotice: '',
-    isSubmittingCommand: false,
+    isMissionActionBusy: false,
   }
 
   const rerender = () => renderVelaShell(root, state, {
@@ -86,9 +86,9 @@ function mountVelaShell(root) {
     },
     onSubmitCommand: async (text) => {
       const command = String(text || '').trim()
-      if (!command || state.isSubmittingCommand) return
+      if (!command || state.isMissionActionBusy) return
       try {
-        state.isSubmittingCommand = true
+        state.isMissionActionBusy = true
         state.notice = ''
         rerender()
         const mission = await sendMissionCommand(command)
@@ -103,7 +103,7 @@ function mountVelaShell(root) {
         }
         state.notice = formatMissionErrorNotice(err, 'Unable to send mission command')
       } finally {
-        state.isSubmittingCommand = false
+        state.isMissionActionBusy = false
         rerender()
       }
     },
@@ -181,8 +181,11 @@ function mountVelaShell(root) {
       rerender()
     },
     onResolveReviewCheck: async (check) => {
+      if (state.isMissionActionBusy) return
       try {
+        state.isMissionActionBusy = true
         state.notice = ''
+        rerender()
         const mission = await recordCurrentMissionReviewCheck(reviewResolutionPayload(check))
         if (!mission) return
         state.mission = mission
@@ -193,12 +196,18 @@ function mountVelaShell(root) {
           await refreshMissions(state)
         }
         state.notice = formatMissionErrorNotice(err, 'Unable to resolve review check')
+      } finally {
+        state.isMissionActionBusy = false
+        rerender()
       }
-      rerender()
     },
     onApprovePermission: async (permission) => {
+      if (state.isMissionActionBusy) return
+      let clearSpinePanel = false
       try {
+        state.isMissionActionBusy = true
         state.notice = ''
+        rerender()
         const resolvedMission = await resolveCurrentMissionPermission(permissionResolutionPayload(permission))
         if (!resolvedMission) return
         state.mission = resolvedMission
@@ -206,15 +215,18 @@ function mountVelaShell(root) {
         state.voiceNotice = 'Permission approved'
         await refreshMissions(state)
         state.openSpinePanel = 'guard'
+        clearSpinePanel = true
       } catch (err) {
         if (err?.mission) {
           state.mission = err.mission
           await refreshMissions(state)
         }
         state.notice = formatMissionErrorNotice(err, 'Unable to approve permission')
+      } finally {
+        state.isMissionActionBusy = false
+        rerender()
+        if (clearSpinePanel) state.openSpinePanel = ''
       }
-      rerender()
-      state.openSpinePanel = ''
     },
     onOpenSpinePanel: (panelId) => {
       state.openSpinePanel = panelId
@@ -350,7 +362,7 @@ function renderVelaShell(root, state, handlers) {
       onResolveReviewCheck: handlers.onResolveReviewCheck,
       onOpenSpinePanel: handlers.onOpenSpinePanel,
       onSubmitCommand: handlers.onSubmitCommand,
-      isSubmittingCommand: state.isSubmittingCommand,
+      isMissionActionBusy: state.isMissionActionBusy,
     })
   }
 
@@ -358,7 +370,7 @@ function renderVelaShell(root, state, handlers) {
     renderCommandBar(state.mission, {
       onSubmitCommand: handlers.onSubmitCommand,
       onSelectPermissionMode: handlers.onSelectPermissionMode,
-      isSubmittingCommand: state.isSubmittingCommand,
+      isMissionActionBusy: state.isMissionActionBusy,
     }),
     renderMissionRail({
       activeView: state.activeView,
