@@ -286,7 +286,7 @@ function planDesktopAdapterRun(mission = {}, input = {}) {
   const toolCallId = makeAdapterToolId(capability.id)
   const target = desktopTarget(mission, input)
   const profile = desktopExecutionProfile(target)
-  const summary = `桌面代理已准备好处理「${target.appName}」相关任务。当前原型只记录模拟打开应用和模拟读取上下文，不会真的打开应用、截图、读取真实屏幕或发送消息；真实适配器入口为 ${profile.realAdapterEntry}，接入真实桌面控制前必须经过 Screen/Execute Guard。`
+  const summary = `好的，我准备打开「${target.appName}」并查看当前上下文。当前安全模式只记录模拟打开和模拟上下文，不会真的启动应用、截图、读取真实屏幕或发送消息；真实适配器入口为 ${profile.realAdapterEntry}，接入真实桌面控制前必须经过 Screen/Execute Guard。`
   return {
     capability,
     toolCall: {
@@ -305,7 +305,7 @@ function planDesktopAdapterRun(mission = {}, input = {}) {
       summary,
       planStepId,
     },
-    nextStep: '桌面代理已完成安全预检；继续后会生成模拟上下文证据，真实 App 操作仍需单独确认。',
+    nextStep: `我已准备好打开「${target.appName}」；继续后会生成上下文回执，真实 App 操作仍需单独确认。`,
   }
 }
 
@@ -877,7 +877,7 @@ function executeBrowserAdapterRun(mission = {}, input = {}) {
 
 function desktopExecutionSummary(target = {}) {
   const profile = desktopExecutionProfile(target)
-  return `已完成「${target.appName}」桌面控制原型链路：模拟打开应用、模拟读取当前上下文，并确认没有真实启动应用、截图、读取真实屏幕或发送外部消息。执行模式：${profile.executionMode}；真实适配器入口：${profile.realAdapterEntry}。`
+  return `「${target.appName}」上下文已就绪：Vela 已记录打开应用和查看当前状态的受控回执。当前执行模式为 ${profile.executionMode}，没有真实启动应用、截图、读取真实屏幕或发送外部消息；真实适配器入口：${profile.realAdapterEntry}。`
 }
 
 function executeDesktopAdapterRun(mission = {}, input = {}) {
@@ -971,7 +971,7 @@ function executeDesktopAdapterRun(mission = {}, input = {}) {
         role: 'Operator',
       },
     ],
-    nextStep: '桌面上下文原型结果已准备好；真实 App 控制仍需你确认授权。',
+    nextStep: `「${target.appName}」上下文已就绪。你可以继续说下一步，例如查看最近消息、草拟回复，或停止。`,
   }
 }
 

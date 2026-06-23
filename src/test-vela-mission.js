@@ -1012,7 +1012,8 @@ try {
   })
   assert(desktopAdapterPlan.toolCall.toolName === 'desktop.app-control.prepare', 'desktop adapter prepares a desktop tool call')
   assert(!desktopAdapterPlan.permission, 'desktop adapter prototype does not request permission before mocked inspection')
-  assert(desktopAdapterPlan.artifact.summary.includes('不会真的打开应用'), 'desktop adapter plan states no real app action')
+  assert(desktopAdapterPlan.artifact.summary.includes('我准备打开「微信」'), 'desktop adapter plan uses natural assistant wording')
+  assert(desktopAdapterPlan.artifact.summary.includes('不会真的启动应用'), 'desktop adapter plan states no real app action')
   assert(desktopAdapterPlan.artifact.summary.includes('desktop://adapters/wechat/screen-context'), 'desktop adapter plan records real adapter entrypoint')
   const desktopAdapterRun = capabilityAdapters.executeCapabilityAdapterRun({
     id: 'mission-desktop-adapter',
@@ -2026,12 +2027,16 @@ try {
   assert(desktopCommandRunning.state === 'Running', 'desktop command enters running state')
   assert(desktopCommandRunning.toolCalls.at(-1).toolName === 'desktop.app-control.prepare', 'desktop command records desktop prepare tool call')
   assert(desktopCommandRunning.artifacts.at(-1).title === '桌面执行方案', 'desktop command creates desktop execution plan artifact')
+  assert(desktopCommandRunning.nextStep.includes('我已准备好打开「微信」'), 'desktop command prepare uses natural assistant next step')
   const desktopCommandReviewing = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   assert(desktopCommandReviewing.state === 'Reviewing', 'desktop command moves to reviewing after mocked inspection')
   assert(desktopCommandReviewing.toolCalls.at(-1).toolName === 'desktop.app-control.inspect', 'desktop command records desktop inspect execution')
   assert(desktopCommandReviewing.artifacts.at(-1).title === '桌面上下文摘要', 'desktop command creates desktop context artifact')
+  assert(desktopCommandReviewing.artifacts.at(-1).summary.includes('「微信」上下文已就绪'), 'desktop command records natural app-open receipt')
+  assert(desktopCommandReviewing.nextStep.includes('「微信」上下文已就绪'), 'desktop command reviewing keeps natural next step')
   assert(desktopCommandReviewing.reviewChecks.at(-1).title === '桌面上下文复核', 'desktop command creates desktop review check')
   assert(desktopCommandReviewing.reviewChecks.at(-1).outcome === 'passed', 'desktop command review check passes')
+  assert(desktopCommandReviewing.reviewChecks.at(-1).evidence.some(item => item.includes('未真实打开应用')), 'desktop command review still keeps no-real-app evidence')
   const desktopInspectToolId = desktopCommandReviewing.toolCalls.at(-1).id
   const desktopStages = desktopCommandReviewing.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === desktopInspectToolId)
   assert(desktopStages.some(item => item.toolName === 'desktop.open-app' && item.url === 'app://wechat'), 'desktop command records mocked app-open stage')
