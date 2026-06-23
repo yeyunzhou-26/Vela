@@ -96,7 +96,7 @@ const COMMAND_REPAIR_RE = /^(?:(?:not that|change it to|change that to|repair th
 const VOICE_CREDENTIAL_RE = /(?:\b(?:password|passcode|api key|secret|token|credential|private key)\b|密码|密钥|令牌|凭证|凭据)/i
 const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|reply)\b|发给|发送|邮件|消息|回复|发布)/i
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
-const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回复|回个|发消息|发信息|发微信|转发|发送)/i
+const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回复|回个|给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|发消息|发信息|发微信|转发|发送)/i
 const WECHAT_ILINK_LOGIN_RE = /(?:(?:wechat|weixin|微信).*(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)|(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码).*(?:wechat|weixin|微信)|ilink)/i
 const WECHAT_QR_SCAN_STATUS_RE = /(?:扫码|二维码|我扫了|已扫|扫好了|扫完了|好了|scan|scanned|qr|login done)/i
 const APP_CONTEXT_FOLLOWUP_RE = /(?:(?:看看|看一下|查看|读一下|读取|检查|帮我看|帮我读).*(?:最近消息|消息|聊天|对话|上下文|当前状态)|(?:最近消息|聊天记录|对话上下文|当前对话|current chat|recent messages|read messages|check messages))/i
@@ -1675,12 +1675,14 @@ function externalMessageDraftRevisionText(text = '') {
 function externalMessageDirectReplyText(text = '') {
   const raw = asText(text)
   const match = raw.match(/^(?:给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公)|发(?:给)?(?:她|他|对方|老婆|老公))\s*[:：]\s*(.+)$/)
+    || raw.match(/(?:^|[，,；;。]\s*)(?:给(?:她|他|对方|老婆|老公)?回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公)|发(?:给)?(?:她|他|对方|老婆|老公))\s*[:：]\s*(.+)$/)
     || raw.match(/^(?:给(?:她|他|对方|老婆|老公)回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公))\s*(.{2,})$/)
+    || raw.match(/(?:^|[，,；;。]\s*)(?:给(?:她|他|对方|老婆|老公)回|回(?:她|他|对方|老婆|老公)|回复(?:她|他|对方|老婆|老公))\s*(.{2,})$/)
   const direct = asText(match?.[1])
     .replace(/^[「『“"']+/, '')
     .replace(/[」』”"']+$/, '')
     .trim()
-  if (/^(一下|一个|信息|消息|回复|回信)$/.test(direct)) return ''
+  if (/^(一下|一个|个?信息|消息|回复|回信)$/.test(direct)) return ''
   return direct
 }
 

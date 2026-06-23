@@ -2390,6 +2390,14 @@ try {
   assert(assistantDraftRepeatedApproval.state === 'Complete', 'external message repeated approval keeps completed mission')
   assert(assistantDraftRepeatedApproval.toolCalls.filter(item => item.toolName === 'messages.outbound.send').length === 1, 'external message repeated approval does not record another outbound send')
   assert(assistantDraftRepeatedApproval.artifacts.filter(item => item.kind === 'send-receipt').length === 1, 'external message repeated approval does not record another send receipt')
+  runtime.applyCurrentMissionCommand({
+    text: '帮我打开微信，给老婆回：我马上到',
+    source: 'test-command',
+  })
+  const assistantDirectSingleDraft = runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  assert(assistantDirectSingleDraft.state === 'Waiting for permission', 'external direct single command waits for send confirmation')
+  assert(assistantDirectSingleDraft.artifacts.at(-1).summary.includes('我马上到'), 'external direct single command uses provided reply text')
+  assert(assistantDirectSingleDraft.permissions.at(-1).summary.includes('我马上到'), 'external direct single command permission carries provided reply text')
 
   runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
