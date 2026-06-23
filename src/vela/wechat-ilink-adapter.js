@@ -14,6 +14,7 @@ const WECHAT_ILINK_ENV = {
   routeTag: 'VELA_WECHAT_ILINK_ROUTE_TAG',
   enableRealLogin: 'VELA_WECHAT_ILINK_ENABLE_REAL_LOGIN',
   enableRealSend: 'VELA_WECHAT_ILINK_ENABLE_REAL_SEND',
+  enableRealRead: 'VELA_WECHAT_ILINK_ENABLE_REAL_READ',
 }
 const DEFAULT_WECHAT_ILINK_CREDENTIALS_FILE = 'vela-wechat-ilink-credentials.json'
 const DEFAULT_WECHAT_ILINK_BOT_TYPE = '3'
@@ -21,6 +22,10 @@ const DEFAULT_WECHAT_ILINK_BOT_TYPE = '3'
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim()
   return text || fallback
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : []
 }
 
 function envValue(env = {}, key = '', fallback = '') {
@@ -63,6 +68,16 @@ function shouldAllowWechatIlinkSend(options = {}, env = {}) {
     return options.allowNetwork === true
   }
   return enabledFlag(envValue(env, WECHAT_ILINK_ENV.enableRealSend))
+}
+
+function shouldAllowWechatIlinkRead(options = {}, env = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, 'allowRead')) {
+    return options.allowRead === true
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'allowNetwork')) {
+    return options.allowNetwork === true
+  }
+  return enabledFlag(envValue(env, WECHAT_ILINK_ENV.enableRealRead))
 }
 
 function resolveWechatIlinkPackage() {
@@ -346,6 +361,160 @@ export function wechatIlinkSendEvidence(result = {}) {
     `微信凭据来源：${asText(result.credentialSource, 'none')}`,
     `微信收件人 ID：${result.recipientUserId ? 'present' : 'none'}`,
     `微信发送原因：${asText(result.reason)}`,
+  ]
+}
+
+function extractWechatIlinkTextFromItems(items = []) {
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item?.text_item?.text != null) return asText(item.text_item.text)
+    if (item?.voice_item?.text != null) return asText(item.voice_item.text)
+  }
+  return ''
+}
+
+function normalizeWechatIlinkMessage(message = {}, extractText = null) {
+  const text = typeof extractText === 'function'
+    ? asText(extractText(message), extractWechatIlinkTextFromItems(message.item_list))
+    : extractWechatIlinkTextFromItems(message.item_list)
+  return {
+    id: asText(message.msgid || message.message_id || message.id),
+    fromUserId: asText(message.from_user_id || message.fromUserId),
+    toUserId: asText(message.to_user_id || message.toUserId),
+    messageType: asText(message.message_type || message.messageType),
+    contextToken: asText(message.context_token || message.contextToken),
+    text,
+    createdAt: asText(message.create_time || message.createdAt || message.timestamp),
+  }
+}
+
+export async function readWechatIlinkRecentMessages(options = {}) {
+  const env = options.env || (typeof process === 'undefined' ? {} : process.env)
+  const credentials = readWechatIlinkCredentials({ ...options, env })
+  const packagePath = resolveWechatIlinkPackage()
+  const realReadEnabled = shouldAllowWechatIlinkRead(options, env)
+  const recipientUserId = asText(options.recipientUserId || options.toUserId || options.fromUserId, credentials.defaultRecipientUserId)
+  const base = {
+    adapterId: 'wechat-ilink',
+    action: 'wechat-ilink.messages.read-recent',
+    risk: 'Screen',
+    packageAvailable: Boolean(packagePath),
+    packagePath,
+    credentialStatus: credentials.token && credentials.accountId ? 'configured' : 'missing',
+    credentialSource: credentials.source,
+    credentialStorePath: credentials.storePath,
+    recipientUserId,
+    recipientStatus: recipientUserId ? 'configured' : 'missing',
+    realReadEnabled,
+    executionMode: realReadEnabled ? 'live' : 'simulated',
+    status: realReadEnabled ? 'prepared' : 'simulated',
+    messages: [],
+    messageCount: 0,
+    syncBuf: asText(options.syncBuf || options.getUpdatesBuf),
+    reason: realReadEnabled
+      ? '真实微信 iLink 最近消息读取已启用，等待调用 getUpdates。'
+      : `真实微信 iLink 最近消息读取未启用；设置 ${WECHAT_ILINK_ENV.enableRealRead}=1 或传入 allowRead=true 后才会调用 getUpdates。`,
+    nextAction: realReadEnabled ? 'read-updates' : 'record-simulated-context',
+    createdAt: asText(options.createdAt, new Date().toISOString()),
+  }
+
+  if (!packagePath) {
+    return {
+      ...base,
+      executionMode: 'unavailable',
+      status: 'blocked',
+      reason: '未安装 wechat-ilink-client，无法读取微信最近消息。',
+      nextAction: 'install-wechat-ilink-client',
+    }
+  }
+
+  if (!credentials.token || !credentials.accountId) {
+    return {
+      ...base,
+      status: 'blocked',
+      reason: '缺少微信 iLink token/accountId，无法读取最近消息。',
+      nextAction: 'connect-wechat-ilink',
+    }
+  }
+
+  if (!recipientUserId) {
+    return {
+      ...base,
+      status: 'blocked',
+      reason: '缺少收件人 iLink 用户 ID，无法筛选最近消息。',
+      nextAction: 'configure-recipient-user-id',
+    }
+  }
+
+  if (!realReadEnabled) {
+    const simulatedMessages = normalizeArray(options.mockMessages)
+      .map(message => normalizeWechatIlinkMessage(message))
+      .filter(message => message.text)
+      .slice(0, Number(options.limit || 5))
+    return {
+      ...base,
+      status: 'simulated',
+      messages: simulatedMessages,
+      messageCount: simulatedMessages.length,
+      reason: simulatedMessages.length
+        ? '使用测试注入的模拟微信消息；没有调用真实微信接口。'
+        : '本次只记录模拟微信上下文；没有调用真实微信接口。',
+    }
+  }
+
+  try {
+    const clientModule = options.clientModule || await import('wechat-ilink-client')
+    const ApiClient = options.ApiClient || clientModule.ApiClient
+    if (typeof ApiClient !== 'function' && !options.apiClient) {
+      return {
+        ...base,
+        status: 'blocked',
+        reason: 'wechat-ilink-client 没有导出 ApiClient，无法读取微信最近消息。',
+        nextAction: 'verify-wechat-ilink-client-package',
+      }
+    }
+    const api = options.apiClient || new ApiClient({
+      baseUrl: credentials.baseUrl,
+      token: credentials.token,
+      routeTag: envValue(env, WECHAT_ILINK_ENV.routeTag),
+    })
+    const rawUpdates = await api.getUpdates(base.syncBuf || undefined, Number(options.timeoutMs || 1000))
+    const extractText = clientModule.WeChatClient?.extractText
+    const messages = normalizeArray(rawUpdates?.msgs || rawUpdates?.messages)
+      .map(message => normalizeWechatIlinkMessage(message, extractText))
+      .filter(message => message.text)
+      .filter(message => !recipientUserId || message.fromUserId === recipientUserId || message.toUserId === recipientUserId)
+      .slice(0, Number(options.limit || 5))
+    return {
+      ...base,
+      status: 'ok',
+      messages,
+      messageCount: messages.length,
+      syncBuf: asText(rawUpdates?.get_updates_buf || rawUpdates?.syncBuf || base.syncBuf),
+      reason: messages.length
+        ? '已通过微信 iLink getUpdates 读取最近消息。'
+        : '已通过微信 iLink getUpdates 检查最近消息，未找到匹配对象的新文本。',
+      nextAction: 'draft-reply-from-context',
+    }
+  } catch (err) {
+    return {
+      ...base,
+      status: 'failed',
+      reason: `读取微信最近消息失败：${asText(err?.message, 'unknown error')}`,
+      nextAction: 'retry-after-user-review',
+    }
+  }
+}
+
+export function wechatIlinkReadEvidence(result = {}) {
+  return [
+    `微信上下文状态：${asText(result.status, 'unknown')}`,
+    `微信上下文模式：${asText(result.executionMode, 'simulated')}`,
+    `微信真实读取启用：${result.realReadEnabled ? 'yes' : 'no'}`,
+    `微信消息数量：${Number(result.messageCount || 0)}`,
+    `微信凭据状态：${asText(result.credentialStatus, 'missing')}`,
+    `微信凭据来源：${asText(result.credentialSource, 'none')}`,
+    `微信收件人 ID：${result.recipientUserId ? 'present' : 'none'}`,
+    `微信上下文原因：${asText(result.reason)}`,
   ]
 }
 

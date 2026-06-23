@@ -105,6 +105,71 @@ try {
     env: {},
   })
   assert(missingWechatSendClient.status === 'blocked', 'WeChat iLink live send blocks when WeChatClient export is missing')
+  const dryWechatRead = await wechatIlinkAdapter.readWechatIlinkRecentMessages({
+    filePath: wechatCredentialFile,
+    env: {},
+  })
+  assert(dryWechatRead.status === 'simulated', 'WeChat iLink recent read is simulated by default')
+  assert(dryWechatRead.messageCount === 0, 'WeChat iLink simulated recent read does not read messages by default')
+  const mockWechatRead = await wechatIlinkAdapter.readWechatIlinkRecentMessages({
+    filePath: wechatCredentialFile,
+    mockMessages: [{
+      from_user_id: 'wife-user-123456',
+      context_token: 'ctx-mock-read',
+      item_list: [{ type: 1, text_item: { text: '今晚几点回家？' } }],
+    }],
+    env: {},
+  })
+  assert(mockWechatRead.status === 'simulated', 'WeChat iLink mock recent read stays simulated')
+  assert(mockWechatRead.messageCount === 1, 'WeChat iLink mock recent read keeps injected message')
+  assert(mockWechatRead.messages[0].text === '今晚几点回家？', 'WeChat iLink mock recent read extracts text')
+  let fakeWechatReadTimeout = null
+  const liveWechatRead = await wechatIlinkAdapter.readWechatIlinkRecentMessages({
+    filePath: wechatCredentialFile,
+    allowRead: true,
+    timeoutMs: 25,
+    clientModule: {
+      ApiClient: class {
+        async getUpdates(syncBuf, timeoutMs) {
+          fakeWechatReadTimeout = timeoutMs
+          return {
+            get_updates_buf: 'sync-after-read',
+            msgs: [
+              {
+                from_user_id: 'wife-user-123456',
+                to_user_id: 'test-account-1234567890',
+                context_token: 'ctx-live-read',
+                item_list: [{ type: 1, text_item: { text: '记得带牛奶。' } }],
+              },
+              {
+                from_user_id: 'someone-else',
+                item_list: [{ type: 1, text_item: { text: '忽略我' } }],
+              },
+            ],
+          }
+        }
+      },
+      WeChatClient: {
+        extractText(message) {
+          return message.item_list?.[0]?.text_item?.text || ''
+        },
+      },
+    },
+    env: {},
+  })
+  assert(liveWechatRead.status === 'ok', 'WeChat iLink live recent read records ok status')
+  assert(fakeWechatReadTimeout === 25, 'WeChat iLink live recent read uses bounded timeout')
+  assert(liveWechatRead.messageCount === 1, 'WeChat iLink live recent read filters recipient messages')
+  assert(liveWechatRead.messages[0].text === '记得带牛奶。', 'WeChat iLink live recent read extracts live text')
+  assert(liveWechatRead.syncBuf === 'sync-after-read', 'WeChat iLink live recent read records sync buffer')
+  assert(wechatIlinkAdapter.wechatIlinkReadEvidence(liveWechatRead).some(item => item.includes('微信消息数量：1')), 'WeChat iLink recent read evidence records message count')
+  const missingWechatReadClient = await wechatIlinkAdapter.readWechatIlinkRecentMessages({
+    filePath: wechatCredentialFile,
+    allowRead: true,
+    clientModule: {},
+    env: {},
+  })
+  assert(missingWechatReadClient.status === 'blocked', 'WeChat iLink live recent read blocks when ApiClient export is missing')
   const loginRequest = wechatIlinkAdapter.prepareWechatIlinkLoginRequest({ filePath: wechatCredentialFile })
   assert(loginRequest.risk === 'Credential', 'WeChat iLink login request is credential-gated')
   assert(loginRequest.guardrail.includes('必须分别经过用户确认'), 'WeChat iLink login request records separate confirmations')
@@ -2197,6 +2262,83 @@ try {
   assert(outboundSendStages.some(item => item.toolName === 'messages.real-adapter' && item.result === 'skipped'), 'external message approval records skipped real-adapter send stage')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('发送对象：老婆'))), 'external message approval keeps recipient evidence')
   assert(assistantDraftApproved.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('真实适配器入口：desktop://adapters/wechat/messages.confirmed-send'))), 'external message approval keeps real adapter evidence')
+
+  runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
+  let runtimeWechatReadOpts = null
+  let runtimeWechatReadTimeout = null
+  const assistantWechatContextDraft = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    wechatIlinkReadDeps: {
+      allowRead: true,
+      filePath: wechatCredentialFile,
+      timeoutMs: 25,
+      clientModule: {
+        ApiClient: class {
+          constructor(opts) {
+            runtimeWechatReadOpts = opts
+          }
+
+          async getUpdates(syncBuf, timeoutMs) {
+            runtimeWechatReadTimeout = timeoutMs
+            return {
+              get_updates_buf: 'runtime-sync-after-read',
+              msgs: [
+                {
+                  from_user_id: 'runtime-default-user',
+                  to_user_id: 'runtime-account@im.bot',
+                  context_token: 'runtime-context-token-1',
+                  item_list: [{ type: 1, text_item: { text: '路上帮我买牛奶。' } }],
+                },
+                {
+                  from_user_id: 'someone-else',
+                  item_list: [{ type: 1, text_item: { text: '忽略这条。' } }],
+                },
+              ],
+            }
+          }
+        },
+        WeChatClient: {
+          extractText(message) {
+            return message.item_list?.[0]?.text_item?.text || ''
+          },
+        },
+      },
+    },
+  })
+  assert(assistantWechatContextDraft.state === 'Waiting for permission', 'external message live WeChat context still waits for send confirmation')
+  assert(runtimeWechatReadOpts.token === 'runtime-confirmed-token-888', 'external message live WeChat context passes stored token to ApiClient only')
+  assert(runtimeWechatReadTimeout === 25, 'external message live WeChat context uses bounded read timeout')
+  assert(assistantWechatContextDraft.artifacts.some(item => item.title === '微信上下文摘要' && item.summary.includes('路上帮我买牛奶。')), 'external message live WeChat context records recent message summary')
+  assert(assistantWechatContextDraft.artifacts.some(item => item.metadata?.contextToken === 'runtime-context-token-1'), 'external message live WeChat context stores reply context token metadata')
+  assert(assistantWechatContextDraft.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息数量：1'))), 'external message live WeChat context records read evidence')
+  assert(assistantWechatContextDraft.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('最近消息摘要'))), 'external message live WeChat context records message summary evidence')
+  assert(!assistantWechatContextDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message live WeChat context does not send before approval')
+  let contextualWechatSendCall = null
+  const assistantContextualWechatSent = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '可以',
+    source: 'test-command',
+    wechatIlinkSendDeps: {
+      allowSend: true,
+      filePath: wechatCredentialFile,
+      clientModule: {
+        WeChatClient: class {
+          async sendText(to, text, contextToken) {
+            contextualWechatSendCall = { to, text, contextToken }
+            return { status: 'ok' }
+          }
+        },
+      },
+    },
+  })
+  assert(assistantContextualWechatSent.state === 'Complete', 'external message contextual WeChat send completes after approval')
+  assert(contextualWechatSendCall.to === 'runtime-default-user', 'external message contextual WeChat send uses saved recipient')
+  assert(contextualWechatSendCall.contextToken === 'runtime-context-token-1', 'external message contextual WeChat send passes read context token')
+  assert(assistantContextualWechatSent.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('微信消息已发送：yes'))), 'external message contextual WeChat send records live send evidence')
+
   runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',

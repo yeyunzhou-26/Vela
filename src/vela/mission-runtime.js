@@ -7,11 +7,13 @@ import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapte
 import {
   pollWechatIlinkQrLoginStatus,
   prepareWechatIlinkLoginRequest,
+  readWechatIlinkRecentMessages,
   saveWechatIlinkCredentials,
   sendWechatIlinkTextMessage,
   startWechatIlinkQrLoginSession,
   wechatIlinkQrSessionEvidence,
   wechatIlinkQrStatusEvidence,
+  wechatIlinkReadEvidence,
   wechatIlinkSendEvidence,
 } from './wechat-ilink-adapter.js'
 
@@ -1624,20 +1626,80 @@ function hasExternalMessageDesktopContext(mission = {}) {
   return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'desktop.app-control.inspect')
 }
 
-function appendExternalMessageDesktopContext(mission = {}) {
+function wechatContextMessageSummary(contextResult = {}) {
+  const texts = normalizeArray(contextResult.messages)
+    .map(message => asText(message?.text))
+    .filter(Boolean)
+    .slice(0, 3)
+  if (!texts.length) return ''
+  return `最近消息：${texts.map(text => `「${text}」`).join('；')}`
+}
+
+function latestWechatContextToken(contextResult = {}) {
+  return normalizeArray(contextResult.messages)
+    .map(message => asText(message?.contextToken))
+    .find(Boolean) || ''
+}
+
+function latestStoredWechatContextToken(mission = {}) {
+  for (const artifact of [...normalizeArray(mission.artifacts)].reverse()) {
+    const token = asText(artifact?.metadata?.contextToken)
+    if (token) return token
+  }
+  return ''
+}
+
+function makeWechatIlinkReadOptions(input = {}) {
+  const adapterDeps = input.wechatIlinkReadDeps || input.wechatIlink || {}
+  const readOptions = {
+    ...adapterDeps,
+    env: adapterDeps.env || input.env || (typeof process === 'undefined' ? {} : process.env),
+  }
+  for (const key of ['recipientUserId', 'allowRead', 'allowNetwork', 'timeoutMs', 'limit', 'syncBuf', 'mockMessages']) {
+    if (!Object.prototype.hasOwnProperty.call(readOptions, key) && Object.prototype.hasOwnProperty.call(input, key)) {
+      readOptions[key] = input[key]
+    }
+  }
+  return readOptions
+}
+
+async function readWechatContextForExternalMessage(mission = {}, input = {}) {
+  const target = externalMessageDesktopTarget(mission)
+  if (target.appUrl !== 'app://wechat' && !/微信|wechat/i.test(target.appName)) return null
+  return readWechatIlinkRecentMessages(makeWechatIlinkReadOptions(input))
+}
+
+function externalMessagePlanAfterContextBlocked(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (step.id === 'understand-request') return { ...step, status: 'Done' }
+    if (step.id === 'inspect-context') return { ...step, status: 'Blocked' }
+    return step
+  })
+}
+
+function appendExternalMessageDesktopContext(mission = {}, options = {}) {
   if (hasExternalMessageDesktopContext(mission)) return getCurrentMission()
   const planStepId = 'inspect-context'
   const toolCallId = makeId('tool-desktop-app-control-inspect')
   const artifactId = makeId('artifact-desktop-context')
   const target = externalMessageDesktopTarget(mission)
   const payload = externalMessageDraftPayload(mission)
-  const summary = `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；目标对象：${payload.recipient}；执行模式为模拟链路；没有真实打开应用、截图、读取真实屏幕或发送消息。`
+  const contextResult = options.contextResult || null
+  const contextAttempted = contextResult?.adapterId === 'wechat-ilink'
+  const contextBlocked = contextAttempted && ['blocked', 'failed'].includes(asText(contextResult.status))
+  const contextSummary = contextAttempted ? wechatContextMessageSummary(contextResult) : ''
+  const contextReason = asText(contextResult?.reason)
+  const summary = contextAttempted
+    ? (contextSummary
+        ? `已读取「${target.appName}」最近消息上下文；目标对象：${payload.recipient}；${contextSummary}；没有发送消息。`
+        : `已检查「${target.appName}」最近消息上下文；目标对象：${payload.recipient}；${contextReason || '未发现可用于回复的新文本。'}；没有发送消息。`)
+    : `已准备「${target.appName}」上下文原型：模拟打开应用并模拟查看当前对话；目标对象：${payload.recipient}；执行模式为模拟链路；没有真实打开应用、截图、读取真实屏幕或发送消息。`
 
   appendCurrentMissionToolCall({
     id: toolCallId,
     toolName: 'desktop.app-control.inspect',
     role: 'Operator',
-    status: 'ok',
+    status: contextBlocked ? 'blocked' : 'ok',
     planStepId,
     risk: 'Screen',
     result: summary,
@@ -1656,21 +1718,29 @@ function appendExternalMessageDesktopContext(mission = {}) {
     toolName: 'desktop.screen-context',
     toolCallId,
     role: 'Operator',
-    status: 'ok',
-    stage: 'external-message-screen-context',
-    url: 'screen://mock/current-chat',
+    status: contextBlocked ? 'blocked' : 'ok',
+    stage: contextAttempted ? 'external-message-wechat-ilink-context' : 'external-message-screen-context',
+    url: contextAttempted ? 'credential://wechat-ilink/messages/recent' : 'screen://mock/current-chat',
     planStepId,
-    summary: '模拟读取当前对话上下文，未截图或读取真实屏幕。',
+    summary: contextAttempted
+      ? (contextSummary || contextReason || '已通过微信 iLink 检查最近消息。')
+      : '模拟读取当前对话上下文，未截图或读取真实屏幕。',
   })
   appendCurrentMissionToolStage({
     toolName: 'desktop.real-adapter',
     toolCallId,
     role: 'Operator',
-    status: 'skipped',
-    stage: 'external-message-real-adapter-pending',
-    url: payload.realAdapterEntry,
+    status: contextAttempted ? (contextBlocked ? 'blocked' : 'ok') : 'skipped',
+    stage: contextAttempted
+      ? (contextBlocked ? 'external-message-real-adapter-context-blocked' : 'external-message-real-adapter-context')
+      : 'external-message-real-adapter-pending',
+    url: contextAttempted ? 'desktop://adapters/wechat/messages.read-recent' : payload.realAdapterEntry,
     planStepId,
-    summary: `真实${target.appName}桌面适配器尚未接入，本次只记录模拟上下文。`,
+    summary: contextAttempted
+      ? (contextBlocked
+          ? `真实${target.appName}最近消息读取受阻：${contextReason}。`
+          : `真实${target.appName}最近消息读取适配器已完成上下文检查。`)
+      : `真实${target.appName}桌面适配器尚未接入，本次只记录模拟上下文。`,
   })
   appendCurrentMissionToolStage({
     toolName: 'desktop.external-effect',
@@ -1689,24 +1759,41 @@ function appendExternalMessageDesktopContext(mission = {}) {
     uri: `vela://capabilities/desktop.app-control/results/${toolCallId}`,
     summary,
     planStepId,
+    metadata: contextAttempted ? {
+      adapterId: 'wechat-ilink',
+      contextStatus: asText(contextResult.status),
+      messageCount: Number(contextResult.messageCount || 0),
+      contextToken: latestWechatContextToken(contextResult),
+      syncBuf: asText(contextResult.syncBuf),
+    } : {},
   })
   return appendCurrentMissionReviewCheck({
     key: `external-message-desktop-context-${asText(mission.id, 'mission')}`,
     title: '桌面上下文复核',
-    outcome: 'passed',
+    outcome: contextBlocked ? 'blocked' : 'passed',
     reviewer: 'Vela Desktop Reviewer',
     planStepId,
     artifactId,
     toolCallId,
-    summary: '外部消息任务已先完成桌面上下文原型检查；没有隐藏发送动作。',
+    summary: contextBlocked
+      ? '外部消息任务尝试读取微信上下文但受阻；没有隐藏发送动作。'
+      : '外部消息任务已先完成桌面上下文检查；没有隐藏发送动作。',
     evidence: [
       `目标应用：${target.appName}`,
       `消息对象：${payload.recipient}`,
       `发送草稿预览：${payload.sendPreview}`,
       ...desktopAdapterEvidence(payload),
-      `模拟打开：${target.appUrl}`,
-      '模拟屏幕上下文：screen://mock/current-chat',
-      '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
+      ...(contextAttempted
+        ? [
+            ...wechatIlinkReadEvidence(contextResult),
+            contextSummary ? `最近消息摘要：${contextSummary}` : '最近消息摘要：none',
+            '未截图、未发送消息。',
+          ]
+        : [
+            `模拟打开：${target.appUrl}`,
+            '模拟屏幕上下文：screen://mock/current-chat',
+            '未真实打开应用、未截图、未读取真实屏幕、未发送消息。',
+          ]),
       `Guard：${payload.guardrail}`,
     ],
   })
@@ -1867,11 +1954,38 @@ function completeExternalMessageAfterApproval(mission = {}, permission = {}, opt
   })
 }
 
-function advanceExternalMessageMissionByCommand(current = {}, input = {}, text = '') {
+function advanceExternalMessageMissionByCommand(current = {}, input = {}, text = '', options = {}) {
   const createdAt = new Date().toISOString()
   const summary = externalMessageDraftSummary(current)
   const payload = externalMessageDraftPayload(current)
   const payloadSummary = externalMessagePayloadSummary(payload)
+  const contextResult = options.contextResult || null
+  const contextBlocked = contextResult?.adapterId === 'wechat-ilink'
+    && ['blocked', 'failed'].includes(asText(contextResult.status))
+  if (contextBlocked) {
+    updateCurrentMission({
+      state: 'Running',
+      nextStep: `读取${payload.channel}上下文受阻：${asText(contextResult.reason, '请检查连接配置后重试。')}`,
+      plan: externalMessagePlanAfterContextBlocked(current.plan),
+      agentActions: [
+        ...normalizeArray(current.agentActions),
+        makeAgentActionRecord({
+          role: 'Operator',
+          title: '查看外部消息上下文',
+          status: 'blocked',
+          planStepId: 'inspect-context',
+          summary: asText(contextResult.reason, '外部消息上下文读取受阻。'),
+          result: '上下文受阻',
+          requiresReview: true,
+        }, { createdAt }),
+      ],
+    })
+    appendExternalMessageDesktopContext(current, { contextResult })
+    return updateCurrentMission({
+      state: 'Blocked',
+      nextStep: `读取${payload.channel}上下文受阻：${asText(contextResult.reason, '请先连接微信或检查 iLink 配置。')}`,
+    })
+  }
   const nextStep = `${summary} 这样发可以吗？`
   const action = makeAgentActionRecord({
     role: 'Operator',
@@ -1889,7 +2003,7 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
     plan: advanceExternalMessagePlanToConfirm(current.plan),
     agentActions: [...normalizeArray(current.agentActions), action],
   })
-  appendExternalMessageDesktopContext(current)
+  appendExternalMessageDesktopContext(current, { contextResult })
   appendCurrentMissionArtifact({
     title: '拟发送内容',
     kind: 'draft',
@@ -2562,6 +2676,7 @@ export async function resolveCurrentMissionPermissionWithAdapters(id, patch = {}
       const sendOptions = {
         ...adapterDeps,
         text: payload.draftText,
+        contextToken: asText(adapterDeps.contextToken || options.contextToken, latestStoredWechatContextToken(current)),
         env: adapterDeps.env || options.env || (typeof process === 'undefined' ? {} : process.env),
       }
       if (Object.prototype.hasOwnProperty.call(adapterDeps, 'recipientUserId')) {
@@ -2839,6 +2954,11 @@ export async function applyCurrentMissionCommandWithAdapters(input = {}) {
   const isContinue = COMMAND_CONTINUE_RE.test(text)
   if (!capabilityAdapterResult && (isContinue || WECHAT_QR_SCAN_STATUS_RE.test(text))) {
     const current = getCurrentMission()
+    if (isContinue && current.state === 'Planned' && isExternalMessageMission(current)) {
+      const contextResult = await readWechatContextForExternalMessage(current, input)
+      appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+      return advanceExternalMessageMissionByCommand(current, input, text, { contextResult })
+    }
     if (current.state === 'Running' && isWechatIlinkLoginMission(current) && hasWechatIlinkQrArtifact(current)) {
       const loginStatusResult = await continueWechatIlinkLoginAfterQrStatus(current, input)
       if (loginStatusResult) return loginStatusResult
