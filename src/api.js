@@ -43,6 +43,7 @@ import {
   getCurrentMission,
   listMissions,
   resolveCurrentMissionPermission,
+  resolveCurrentMissionPermissionWithAdapters,
   selectMission,
   setCurrentMissionReview,
   startMission,
@@ -507,7 +508,7 @@ export function startAPI(port = 3721, { getStateSnapshot = null, onActivated = n
     if (req.method === 'POST' && url.pathname === '/vela/mission/permissions/resolve') {
       try {
         const body = await readJsonBody(req)
-        jsonResponse(res, 200, { ok: true, mission: resolveCurrentMissionPermission(body) })
+        jsonResponse(res, 200, { ok: true, mission: await resolveCurrentMissionPermissionWithAdapters(body) })
       } catch (err) {
         missionRuntimeErrorResponse(res, err, err?.code === 'permission_not_found' ? 404 : 400)
       }

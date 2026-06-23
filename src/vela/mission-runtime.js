@@ -4,7 +4,7 @@ import { paths } from '../paths.js'
 import { executeCapabilityAdapterRun, planCapabilityAdapterRun, prepareCapabilityAdapterResult } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapter-bridge.js'
-import { prepareWechatIlinkLoginRequest } from './wechat-ilink-adapter.js'
+import { prepareWechatIlinkLoginRequest, startWechatIlinkQrLoginSession, wechatIlinkQrSessionEvidence } from './wechat-ilink-adapter.js'
 
 export const MISSION_STATES = [
   'Draft',
@@ -1101,29 +1101,43 @@ function advanceWechatIlinkLoginMissionByCommand(current = {}, input = {}) {
   })
 }
 
-function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}) {
+function wechatIlinkQrStageStatus(session = {}) {
+  const status = asText(session?.status)
+  if (status === 'qr-ready') return 'ok'
+  if (status === 'failed') return 'failed'
+  if (status === 'blocked') return 'blocked'
+  return 'skipped'
+}
+
+function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}, options = {}) {
   if (!isWechatIlinkLoginPermission(permission) || !isWechatIlinkLoginMission(mission)) return mission
   if (hasWechatIlinkLoginAuthorization(mission)) return mission
 
   const request = prepareWechatIlinkLoginRequest()
+  const qrSession = options.qrSession || null
+  const hasQrSession = Boolean(qrSession)
+  const qrReady = asText(qrSession?.status) === 'qr-ready'
+  const qrBlocked = ['blocked', 'failed'].includes(asText(qrSession?.status))
   const toolCallId = makeId('tool-wechat-ilink-login-authorize')
-  const artifactId = makeId('artifact-wechat-ilink-login-ready')
-  const summary = '已获得微信扫码登录准备授权；当前仍未生成二维码、未保存凭据、未发送消息。'
+  const artifactId = makeId(qrReady ? 'artifact-wechat-ilink-login-qr' : 'artifact-wechat-ilink-login-ready')
+  const summary = qrReady
+    ? '已生成微信扫码登录二维码；当前未轮询扫码状态、未保存凭据、未发送消息。'
+    : '已获得微信扫码登录准备授权；当前仍未生成二维码、未保存凭据、未发送消息。'
 
   appendCurrentMissionAgentAction({
     role: 'Operator',
-    title: '微信扫码登录已授权',
-    status: 'authorized',
+    title: qrReady ? '微信扫码登录二维码已生成' : '微信扫码登录已授权',
+    status: qrReady ? 'qr_ready' : (qrBlocked ? 'blocked' : 'authorized'),
     planStepId: 'confirm-login',
     summary,
-    result: '等待真实二维码登录',
+    result: qrReady ? '等待扫码' : (qrBlocked ? '二维码请求受阻' : '等待真实二维码登录'),
     requiresReview: false,
   })
   appendCurrentMissionToolCall({
     id: toolCallId,
     toolName: 'wechat-ilink.qr-login.authorize',
     role: 'Operator',
-    status: 'prepared',
+    status: qrReady ? 'qr-ready' : (qrBlocked ? 'blocked' : 'prepared'),
     planStepId: 'confirm-login',
     risk: 'Credential',
     result: summary,
@@ -1132,11 +1146,13 @@ function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}) {
     toolName: 'wechat-ilink.qr-login',
     toolCallId,
     role: 'Operator',
-    status: 'skipped',
-    stage: 'wechat-ilink-real-qr-login-pending',
-    url: 'credential://wechat-ilink/qr-login',
+    status: wechatIlinkQrStageStatus(qrSession),
+    stage: qrReady ? 'wechat-ilink-qr-url-ready' : 'wechat-ilink-real-qr-login-pending',
+    url: qrReady ? qrSession.qrCodeUrl : 'credential://wechat-ilink/qr-login',
     planStepId: 'confirm-login',
-    summary: '真实二维码生成尚未执行；后续接入时会把二维码展示给用户扫码。',
+    summary: qrReady
+      ? '已生成二维码 URL；等待用户扫码，尚未轮询确认结果。'
+      : (hasQrSession ? asText(qrSession.reason, '真实二维码生成尚未执行。') : '真实二维码生成尚未执行；后续接入时会把二维码展示给用户扫码。'),
   })
   appendCurrentMissionToolStage({
     toolName: 'wechat-ilink.credential-save',
@@ -1150,35 +1166,40 @@ function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}) {
   })
   appendCurrentMissionArtifact({
     id: artifactId,
-    title: '微信扫码登录授权',
-    kind: 'credential-login-ready',
-    uri: `vela://capabilities/wechat.ilink-session/login-ready/${toolCallId}`,
+    title: qrReady ? '微信扫码登录二维码' : '微信扫码登录授权',
+    kind: qrReady ? 'credential-login-qr' : 'credential-login-ready',
+    uri: qrReady ? qrSession.qrCodeUrl : `vela://capabilities/wechat.ilink-session/login-ready/${toolCallId}`,
     summary,
     planStepId: 'confirm-login',
   })
   appendCurrentMissionReviewCheck({
     key: `wechat-ilink-login-authorized-${asText(mission.id, 'mission')}`,
     title: '微信登录授权复核',
-    outcome: 'passed',
+    outcome: qrBlocked ? 'blocked' : 'passed',
     reviewer: 'Vela Credential Reviewer',
     planStepId: 'confirm-login',
     artifactId,
     toolCallId,
-    summary: '微信扫码登录授权已记录，但没有执行真实登录、保存凭据或发送消息。',
+    summary: qrReady
+      ? '微信扫码登录二维码已生成，但没有轮询扫码确认、保存凭据或发送消息。'
+      : '微信扫码登录授权已记录，但没有执行真实登录、保存凭据或发送消息。',
     evidence: [
       `批准记录：${permission.id}`,
       `凭据保存位置：${request.credentialStorePath}`,
-      '授权后仍未生成二维码。',
+      qrReady ? '授权后已生成二维码 URL。' : '授权后仍未生成二维码。',
       '授权后仍未保存 token/accountId。',
       '授权后仍未读取或发送微信消息。',
       '保存凭据和发送消息需要后续单独确认。',
+      ...(hasQrSession ? wechatIlinkQrSessionEvidence(qrSession) : []),
     ],
   })
   const reviewedMission = getCurrentMission()
   return updateCurrentMission({
     state: 'Running',
     plan: advanceWechatIlinkLoginPlanAfterApproval(reviewedMission.plan),
-    nextStep: '已获得微信扫码登录授权。下一步接入真实二维码生成后，我会展示二维码让你扫码；登录成功后再单独确认保存凭据。',
+    nextStep: qrReady
+      ? '已生成微信登录二维码。请扫码；扫码确认后，我会再单独确认是否保存凭据。'
+      : '已获得微信扫码登录授权。下一步接入真实二维码生成后，我会展示二维码让你扫码；登录成功后再单独确认保存凭据。',
   })
 }
 
@@ -2034,28 +2055,33 @@ export function appendCurrentMissionPermission(input = {}) {
 // Guard approval: resolve a pending permission request in place (not a second record)
 // and close the loop by resuming the mission. This is the shared runtime primitive behind
 // the Guard Spine button, typed "approve" commands, and the voice privacy gate.
-export function resolveCurrentMissionPermission(id, patch = {}) {
-  const options = (id && typeof id === 'object')
+function normalizePermissionResolveOptions(id, patch = {}) {
+  return (id && typeof id === 'object')
     ? id
     : { ...patch, id: asText(typeof id === 'string' ? id : '') || asText(patch.id || patch.permissionId) }
+}
+
+function findPermissionResolveTarget(permissions = [], requestedId = '', current = {}) {
+  if (requestedId) {
+    const target = permissions.find(item => item.id === requestedId) || null
+    if (!target) throw new MissionRuntimeError(`Permission not found: ${requestedId}`, 'permission_not_found')
+    return target
+  }
+  for (let index = permissions.length - 1; index >= 0; index -= 1) {
+    if (isPendingPermissionDecision(permissions[index].decision)) {
+      return permissions[index]
+    }
+  }
+  throw new MissionRuntimeError('No pending permission to resolve.', 'permission_not_pending', { mission: current })
+}
+
+function resolveCurrentMissionPermissionWithOptions(options = {}, runtimeOptions = {}) {
   const store = readStore()
   const current = store.missions.find(mission => mission.id === store.currentMissionId) || store.missions[0] || createSeedMission()
   const permissions = normalizeArray(current.permissions)
 
   const requestedId = asText(options.id || options.permissionId)
-  let target = null
-  if (requestedId) {
-    target = permissions.find(item => item.id === requestedId) || null
-    if (!target) throw new MissionRuntimeError(`Permission not found: ${requestedId}`, 'permission_not_found')
-  } else {
-    for (let index = permissions.length - 1; index >= 0; index -= 1) {
-      if (isPendingPermissionDecision(permissions[index].decision)) {
-        target = permissions[index]
-        break
-      }
-    }
-    if (!target) throw new MissionRuntimeError('No pending permission to resolve.', 'permission_not_pending', { mission: current })
-  }
+  const target = findPermissionResolveTarget(permissions, requestedId, current)
   if (!isPendingPermissionDecision(target.decision)) {
     throw new MissionRuntimeError(`Permission already resolved: ${target.decision}`, 'permission_not_pending', { mission: current })
   }
@@ -2112,9 +2138,42 @@ export function resolveCurrentMissionPermission(id, patch = {}) {
     return completeExternalMessageAfterApproval(written, resolvedPermission)
   }
   if (approved && !stillPending && isWechatIlinkLoginPermission(resolvedPermission)) {
-    return completeWechatIlinkLoginAfterApproval(written, resolvedPermission)
+    return completeWechatIlinkLoginAfterApproval(written, resolvedPermission, {
+      qrSession: runtimeOptions.wechatIlinkQrSession || null,
+    })
   }
   return written
+}
+
+export function resolveCurrentMissionPermission(id, patch = {}) {
+  return resolveCurrentMissionPermissionWithOptions(normalizePermissionResolveOptions(id, patch))
+}
+
+export async function resolveCurrentMissionPermissionWithAdapters(id, patch = {}) {
+  const options = normalizePermissionResolveOptions(id, patch)
+  const store = readStore()
+  const current = store.missions.find(mission => mission.id === store.currentMissionId) || store.missions[0] || createSeedMission()
+  const permissions = normalizeArray(current.permissions)
+  const requestedId = asText(options.id || options.permissionId)
+  const target = findPermissionResolveTarget(permissions, requestedId, current)
+  const decision = normalizePermissionDecision(options.decision || options.status || options.result, target.decision)
+  let wechatIlinkQrSession = null
+
+  if (decision === 'approved' && isWechatIlinkLoginPermission(target)) {
+    const adapterDeps = options.wechatIlinkLoginDeps || options.wechatIlink || {}
+    const qrSessionOptions = {
+      ...adapterDeps,
+      env: adapterDeps.env || options.env || (typeof process === 'undefined' ? {} : process.env),
+    }
+    if (Object.prototype.hasOwnProperty.call(adapterDeps, 'allowNetwork')) {
+      qrSessionOptions.allowNetwork = adapterDeps.allowNetwork
+    } else if (Object.prototype.hasOwnProperty.call(options, 'allowNetwork')) {
+      qrSessionOptions.allowNetwork = options.allowNetwork
+    }
+    wechatIlinkQrSession = await startWechatIlinkQrLoginSession(qrSessionOptions)
+  }
+
+  return resolveCurrentMissionPermissionWithOptions(options, { wechatIlinkQrSession })
 }
 
 export function appendCurrentMissionRecoveryAction(input = {}) {
@@ -2330,6 +2389,23 @@ export function applyCurrentMissionCommand(input = {}) {
 
 export async function applyCurrentMissionCommandWithAdapters(input = {}) {
   const text = asText(input.text || input.command || input.content)
+  const isApprovePermission = COMMAND_PERMISSION_APPROVE_RE.test(text)
+  const isDenyPermission = COMMAND_PERMISSION_DENY_RE.test(text)
+  if (isApprovePermission || isDenyPermission) {
+    const pendingMission = getCurrentMission()
+    const hasPending = normalizeArray(pendingMission.permissions).some(item => isPendingPermissionDecision(item.decision))
+    if (hasPending) {
+      appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+      return resolveCurrentMissionPermissionWithAdapters(null, {
+        ...input,
+        decision: isDenyPermission ? 'denied' : 'approved',
+        approvedBy: asText(input.approvedBy || input.reviewer || input.requestedBy, input.source === 'voice' ? 'Vela voice' : 'Vela command'),
+        reason: text,
+        nextStep: input.nextStep,
+      })
+    }
+  }
+
   let capabilityAdapterResult = input.capabilityAdapterResult || null
   if (!capabilityAdapterResult && COMMAND_CONTINUE_RE.test(text)) {
     const current = getCurrentMission()

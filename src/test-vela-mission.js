@@ -1918,6 +1918,48 @@ try {
   assert(wechatLoginAuthorizeStages.some(item => item.toolName === 'wechat-ilink.credential-save' && item.result === 'skipped'), 'WeChat login approval still skips credential save')
   assert(!wechatLoginApproved.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'WeChat login approval does not send messages')
 
+  runtime.applyCurrentMissionCommand({
+    text: '登录微信',
+    source: 'test-command',
+  })
+  runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
+  const wechatLoginQrMission = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '可以',
+    source: 'test-command',
+    wechatIlinkLoginDeps: {
+      allowNetwork: true,
+      env: {
+        VELA_WECHAT_ILINK_BOT_TYPE: '8',
+        VELA_WECHAT_ILINK_BASE_URL: 'https://ilink-runtime.example.test',
+      },
+      clientModule: {
+        ApiClient: class {
+          async getQRCode(botType) {
+            return {
+              qrcode: `runtime-qr-${botType}`,
+              qrcode_img_content: `https://qr.runtime.example.test/${botType}`,
+            }
+          }
+        },
+      },
+    },
+  })
+  assert(wechatLoginQrMission.state === 'Running', 'async WeChat login approval resumes the mission')
+  assert(wechatLoginQrMission.permissions.at(-1).decision === 'approved', 'async WeChat login approval resolves permission')
+  assert(wechatLoginQrMission.toolCalls.some(item => item.toolName === 'wechat-ilink.qr-login.authorize' && item.status === 'qr-ready'), 'async WeChat login approval records ready QR tool')
+  assert(wechatLoginQrMission.artifacts.some(item => item.kind === 'credential-login-qr'), 'async WeChat login approval creates QR artifact')
+  assert(wechatLoginQrMission.artifacts.some(item => item.uri === 'https://qr.runtime.example.test/8'), 'async WeChat login QR artifact stores QR URL')
+  assert(wechatLoginQrMission.nextStep.includes('请扫码'), 'async WeChat login approval asks user to scan QR')
+  assert(wechatLoginQrMission.reviewChecks.some(item => item.title === '微信登录授权复核' && item.outcome === 'passed'), 'async WeChat login QR approval records review')
+  assert(wechatLoginQrMission.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('二维码状态：qr-ready'))), 'async WeChat login QR review records ready QR evidence')
+  assert(wechatLoginQrMission.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('凭据保存：no'))), 'async WeChat login QR review records no credential save')
+  assert(wechatLoginQrMission.reviewChecks.some(item => item.evidence?.some(evidence => evidence.includes('消息发送：no'))), 'async WeChat login QR review records no message send')
+  const wechatLoginQrTool = wechatLoginQrMission.toolCalls.find(item => item.toolName === 'wechat-ilink.qr-login.authorize' && item.status === 'qr-ready')
+  const wechatLoginQrStages = wechatLoginQrMission.trace.filter(item => item.type === 'tool.stage' && item.toolCallId === wechatLoginQrTool?.id)
+  assert(wechatLoginQrStages.some(item => item.toolName === 'wechat-ilink.qr-login' && item.result === 'ok' && item.url === 'https://qr.runtime.example.test/8'), 'async WeChat login QR approval records QR URL stage')
+  assert(wechatLoginQrStages.some(item => item.toolName === 'wechat-ilink.credential-save' && item.result === 'skipped'), 'async WeChat login QR approval still skips credential save')
+  assert(!wechatLoginQrMission.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'async WeChat login QR approval does not send messages')
+
   const assistantMessageMission = runtime.applyCurrentMissionCommand({
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
