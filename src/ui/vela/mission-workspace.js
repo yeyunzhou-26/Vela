@@ -116,6 +116,46 @@ function localizedKind(value, fallback = 'note') {
   return zh(text(value, fallback))
 }
 
+function isCredentialLoginQrArtifact(artifact = {}) {
+  return text(artifact.kind || artifact.type) === 'credential-login-qr'
+}
+
+function qrArtifactUrl(artifact = {}) {
+  const uri = text(artifact.uri || artifact.path)
+  return /^(?:https?:\/\/|data:image\/)/i.test(uri) ? uri : ''
+}
+
+function renderArtifactVisual(artifact = {}) {
+  if (!isCredentialLoginQrArtifact(artifact)) return ''
+  const qrUrl = qrArtifactUrl(artifact)
+  return `
+    <div class="artifact-qr-panel">
+      <div class="artifact-qr-frame">
+        ${qrUrl ? `
+          <img src="${escapeHtml(qrUrl)}" alt="${escapeHtml(zh('WeChat login QR code'))}">
+        ` : `
+          <span>${escapeHtml(zh('QR code pending'))}</span>
+        `}
+      </div>
+      <div class="artifact-qr-copy">
+        <span class="caption">${escapeHtml(zh('WeChat login'))}</span>
+        <strong>${escapeHtml(zh('Scan with WeChat'))}</strong>
+        <p>${escapeHtml(zh('After scanning, Vela will ask before saving credentials.'))}</p>
+      </div>
+    </div>
+  `
+}
+
+function artifactUriLabel(artifact = {}) {
+  if (isCredentialLoginQrArtifact(artifact) && qrArtifactUrl(artifact)) return 'QR URL ready'
+  return text(artifact.uri || artifact.path, 'No URI recorded')
+}
+
+function artifactListMeta(artifact = {}) {
+  if (isCredentialLoginQrArtifact(artifact)) return localizedKind(artifact.kind || artifact.type, '')
+  return [localizedKind(artifact.kind || artifact.type, ''), text(artifact.uri || artifact.path)].filter(Boolean).join(' / ') || zh('Artifacts')
+}
+
 function buildPermissionDetail(permission = {}) {
   return [
     labelValue('Risk', permission.risk || permission.riskClass),
@@ -354,9 +394,11 @@ function renderArtifactCanvas(artifacts, selectedArtifactId, plan) {
       </div>
     `
   }
+  const hasVisual = Boolean(renderArtifactVisual(selected))
   return `
     <div class="canvas-kicker">${escapeHtml(zh('Artifacts'))}</div>
-    <section class="artifact-focus" aria-label="${escapeHtml(zh('Current artifact'))}">
+    <section class="artifact-focus${hasVisual ? ' has-visual' : ''}" aria-label="${escapeHtml(zh('Current artifact'))}">
+      ${renderArtifactVisual(selected)}
       <div class="artifact-copy">
         <span class="caption">${escapeHtml(zh('Current artifact'))}</span>
         <h2>${escapeHtml(zh(text(selected.title || selected.name, 'Mission artifact')))}</h2>
@@ -374,7 +416,7 @@ function renderArtifactCanvas(artifacts, selectedArtifactId, plan) {
         </div>
         <div>
           <dt>${escapeHtml(zh('URI'))}</dt>
-          <dd>${escapeHtml(zh(text(selected.uri || selected.path, 'No URI recorded')))}</dd>
+          <dd>${escapeHtml(zh(artifactUriLabel(selected)))}</dd>
         </div>
         <div>
           <dt>${escapeHtml(zh('Created'))}</dt>
@@ -400,7 +442,7 @@ function renderArtifactCanvas(artifacts, selectedArtifactId, plan) {
           >
             <span>
               <strong>${escapeHtml(zh(text(artifact.title || artifact.name, 'Mission artifact')))}</strong>
-              <small>${escapeHtml([localizedKind(artifact.kind || artifact.type, ''), text(artifact.uri || artifact.path)].filter(Boolean).join(' / ') || zh('Artifacts'))}</small>
+              <small>${escapeHtml(artifactListMeta(artifact))}</small>
             </span>
             <em>${escapeHtml(zh(text(artifact.summary || artifact.detail, 'No summary')))}</em>
             <small class="artifact-step-link">${escapeHtml(planStepLabel(plan, artifact.planStepId))}</small>

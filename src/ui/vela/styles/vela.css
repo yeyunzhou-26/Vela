@@ -548,6 +548,62 @@ input {
   border-bottom: 1px solid var(--line);
 }
 
+.artifact-focus.has-visual {
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(170px, 240px);
+  align-items: start;
+  max-width: 980px;
+}
+
+.artifact-qr-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.artifact-qr-frame {
+  display: grid;
+  place-items: center;
+  width: min(220px, 100%);
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid rgba(82, 213, 232, 0.36);
+  border-radius: 8px;
+  background: #f7fbfc;
+  color: #111820;
+}
+
+.artifact-qr-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.artifact-qr-frame span {
+  color: #2d363d;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.artifact-qr-copy {
+  display: grid;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.artifact-qr-copy strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.artifact-qr-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .artifact-copy {
   min-width: 0;
 }

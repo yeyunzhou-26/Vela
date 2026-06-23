@@ -106,6 +106,14 @@ function createServer() {
         { id: 'input-smoke', text: 'Seeded screen context', source: 'smoke' },
       ],
       artifacts: [
+        {
+          id: 'artifact-wechat-qr',
+          title: '微信登录二维码',
+          kind: 'credential-login-qr',
+          uri: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 fill=%22white%22/%3E%3Cpath d=%22M10 10h30v30H10zM80 10h30v30H80zM10 80h30v30H10zM52 52h12v12H52zM70 52h10v10H70zM92 52h18v12H92zM52 72h18v18H52zM80 80h10v10H80zM100 92h10v18H92V98h8z%22 fill=%22%23111820%22/%3E%3C/svg%3E',
+          summary: '请用微信扫码；保存凭据前仍会再次确认。',
+          planStepId: 'connect-runtime',
+        },
         { id: 'artifact-smoke', title: 'Seed Shell Snapshot', kind: 'preview', summary: 'Shell rendered for smoke verification.', planStepId: 'open-workbench' },
         { id: 'artifact-handoff', title: 'Shell Handoff Note', kind: 'note', uri: 'vela://shell-handoff', summary: 'Artifact handoff remains inspectable in the mission workspace.', planStepId: 'connect-runtime' },
       ],
@@ -803,7 +811,7 @@ try {
   if (!initial.workspaceTabs.some(item => item.mode === 'plan' && item.selected === 'true')) {
     throw new Error(`workspace should default to plan mode: ${JSON.stringify(initial.workspaceTabs)}`)
   }
-  if (!initial.workspaceTabs.some(item => item.mode === 'artifacts' && item.text.includes('2'))) {
+  if (!initial.workspaceTabs.some(item => item.mode === 'artifacts' && item.text.includes('3'))) {
     throw new Error(`workspace artifact tab did not show artifact count: ${JSON.stringify(initial.workspaceTabs)}`)
   }
   if (!initial.canvasText.includes(zh('Create the first mission-first Vela workbench while keeping legacy Brain UI available.'))) {
@@ -883,6 +891,25 @@ try {
   if (!selectedArtifactWorkspace.canvasText.includes(`${zh('Open focused workbench')} (open-workbench)`)) {
     throw new Error(`selected artifact plan step missing: ${selectedArtifactWorkspace.canvasText}`)
   }
+
+  await page.click('.artifact-select[data-artifact-id="artifact-wechat-qr"]')
+  await page.waitForFunction(expected => document.querySelector('.artifact-focus h2')?.textContent?.includes(expected), '微信登录二维码')
+  const qrArtifactWorkspace = await page.evaluate(() => ({
+    collapsed: document.querySelector('.intelligence-spine')?.dataset.collapsed,
+    title: document.querySelector('.artifact-focus h2')?.textContent || '',
+    selected: document.querySelector('.artifact-select[aria-pressed="true"]')?.getAttribute('data-artifact-id') || '',
+    imgSrc: document.querySelector('.artifact-qr-frame img')?.getAttribute('src') || '',
+    canvasText: document.querySelector('.mission-canvas')?.textContent || '',
+  }))
+  if (qrArtifactWorkspace.collapsed !== 'true') throw new Error('selecting QR artifact should not expand the spine')
+  if (qrArtifactWorkspace.selected !== 'artifact-wechat-qr') throw new Error(`QR artifact selection did not mark chosen artifact: ${qrArtifactWorkspace.selected}`)
+  if (!qrArtifactWorkspace.imgSrc.startsWith('data:image/svg+xml')) {
+    throw new Error(`QR artifact did not render an image: ${qrArtifactWorkspace.imgSrc}`)
+  }
+  if (!qrArtifactWorkspace.canvasText.includes('请用微信扫码') || !qrArtifactWorkspace.canvasText.includes('保存凭据')) {
+    throw new Error(`QR artifact missing scan guidance: ${qrArtifactWorkspace.canvasText}`)
+  }
+
   await page.click('.workspace-mode-tab[data-workspace-mode="plan"]')
   await page.waitForFunction(() => document.querySelector('.workspace-mode-tab[data-workspace-mode="plan"]')?.getAttribute('aria-selected') === 'true')
 
