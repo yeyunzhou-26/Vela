@@ -39,6 +39,26 @@ try {
   })
   assert(readyWechatIlink.available === true, 'WeChat iLink preflight can become available with credentials and recipient')
   assert(readyWechatIlink.executionMode === 'live', 'WeChat iLink preflight marks configured adapter live')
+  const wechatCredentialFile = path.join(tmp, 'wechat-ilink-test-credentials.json')
+  const savedWechatCredentials = wechatIlinkAdapter.saveWechatIlinkCredentials({
+    token: 'test-token-1234567890',
+    accountId: 'test-account-1234567890',
+    defaultRecipientUserId: 'wife-user-123456',
+  }, { filePath: wechatCredentialFile, savedAt: '2026-06-23T00:00:00.000Z' })
+  assert(savedWechatCredentials.filePath === wechatCredentialFile, 'WeChat iLink credential save returns store path')
+  assert(savedWechatCredentials.credentials.token !== 'test-token-1234567890', 'WeChat iLink credential save returns redacted token')
+  const loadedWechatCredentials = wechatIlinkAdapter.loadWechatIlinkStoredCredentials({ filePath: wechatCredentialFile })
+  assert(loadedWechatCredentials.token === 'test-token-1234567890', 'WeChat iLink credential store loads token')
+  assert(loadedWechatCredentials.accountId === 'test-account-1234567890', 'WeChat iLink credential store loads account id')
+  const storedWechatPreflight = wechatIlinkAdapter.preflightWechatIlinkAdapter({ env: {}, filePath: wechatCredentialFile })
+  assert(storedWechatPreflight.available === true, 'WeChat iLink preflight can use stored credentials')
+  assert(storedWechatPreflight.credentialSource === 'local-store', 'WeChat iLink preflight records local credential source')
+  assert(storedWechatPreflight.recipientStatus === 'configured', 'WeChat iLink preflight uses stored default recipient')
+  const loginRequest = wechatIlinkAdapter.prepareWechatIlinkLoginRequest({ filePath: wechatCredentialFile })
+  assert(loginRequest.risk === 'Credential', 'WeChat iLink login request is credential-gated')
+  assert(loginRequest.guardrail.includes('必须分别经过用户确认'), 'WeChat iLink login request records separate confirmations')
+  wechatIlinkAdapter.removeWechatIlinkCredentials({ filePath: wechatCredentialFile })
+  assert(!fs.existsSync(wechatCredentialFile), 'WeChat iLink credential removal deletes local store')
 
   const wechatScreenAdapter = desktopAdapterBridge.describeDesktopAdapter({ appId: 'wechat', appName: '微信', appUrl: 'app://wechat' }, 'screen-context')
   assert(wechatScreenAdapter.realAdapterEntry === 'desktop://adapters/wechat/screen-context', 'desktop bridge describes WeChat screen-context entrypoint')
