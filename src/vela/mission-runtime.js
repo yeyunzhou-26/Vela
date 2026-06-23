@@ -4,7 +4,14 @@ import { paths } from '../paths.js'
 import { executeCapabilityAdapterRun, planCapabilityAdapterRun, prepareCapabilityAdapterResult } from './capability-adapters.js'
 import { findOpenCapabilitiesForText } from './capability-registry.js'
 import { describeDesktopAdapter, desktopAdapterEvidence } from './desktop-adapter-bridge.js'
-import { prepareWechatIlinkLoginRequest, startWechatIlinkQrLoginSession, wechatIlinkQrSessionEvidence } from './wechat-ilink-adapter.js'
+import {
+  pollWechatIlinkQrLoginStatus,
+  prepareWechatIlinkLoginRequest,
+  saveWechatIlinkCredentials,
+  startWechatIlinkQrLoginSession,
+  wechatIlinkQrSessionEvidence,
+  wechatIlinkQrStatusEvidence,
+} from './wechat-ilink-adapter.js'
 
 export const MISSION_STATES = [
   'Draft',
@@ -87,9 +94,11 @@ const VOICE_EXTERNAL_MESSAGE_RE = /(?:\b(?:send|email|message|post|tweet|dm|repl
 const VOICE_SCREEN_CONTEXT_RE = /(?:\b(?:screen|screenshot|window|app|desktop)\b|屏幕|截图|窗口|桌面)/i
 const ASSISTANT_EXTERNAL_MESSAGE_RE = /(?:\b(?:message|reply|dm|text|send)\b|回复|回个|发消息|发信息|发微信|转发|发送)/i
 const WECHAT_ILINK_LOGIN_RE = /(?:(?:wechat|weixin|微信).*(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码)|(?:login|sign in|connect|auth|authorize|授权|登录|连接|接入|绑定|扫码).*(?:wechat|weixin|微信)|ilink)/i
+const WECHAT_QR_SCAN_STATUS_RE = /(?:扫码|二维码|我扫了|已扫|扫好了|扫完了|好了|scan|scanned|qr|login done)/i
 const COMMAND_PERMISSION_APPROVE_RE = /(?:\b(?:approve|approved|allow|allowed|grant|granted|authorize|authorized)\b|批准|许可|同意|授权|允许|可以|通过)/i
 const COMMAND_PERMISSION_DENY_RE = /(?:\b(?:deny|denied|decline|declined|reject|rejected|disallow)\b|拒绝|否决|驳回|不允许|不可以|不行|不能|不要|别发|别发送)/i
 const PENDING_PERMISSION_RE = /^(requested|pending|needs approval|waiting)$/i
+const WECHAT_ILINK_PENDING_CREDENTIALS = new Map()
 
 const STATE_TRANSITIONS = {
   Draft: ['Planned', 'Running', 'Waiting for user', 'Blocked', 'Failed'],
@@ -778,10 +787,21 @@ function normalizeScreenContext(value = {}) {
   return Object.fromEntries(Object.entries(context).filter(([, contextValue]) => contextValue))
 }
 
+function normalizeArtifactMetadata(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, metadataValue]) => [asText(key), metadataValue])
+    .filter(([key, metadataValue]) => {
+      if (!key) return false
+      return ['string', 'number', 'boolean'].includes(typeof metadataValue)
+    }))
+}
+
 function normalizeArtifactRecord(value = {}, index = 0, options = {}) {
   const title = asText(value.title || value.name, 'Mission artifact')
   const createdAt = asText(value.createdAt, options.now || new Date().toISOString())
-  return {
+  const metadata = normalizeArtifactMetadata(value.metadata || value.meta)
+  const record = {
     id: asText(value.id || value.uri || value.path, options.idFallback || `artifact-${index + 1}`),
     title,
     kind: asText(value.kind || value.type, 'note'),
@@ -790,6 +810,8 @@ function normalizeArtifactRecord(value = {}, index = 0, options = {}) {
     planStepId: asText(value.planStepId, ''),
     createdAt,
   }
+  if (Object.keys(metadata).length) record.metadata = metadata
+  return record
 }
 
 function normalizeArtifacts(value = []) {
@@ -1171,6 +1193,10 @@ function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}, op
     uri: qrReady ? qrSession.qrCodeUrl : `vela://capabilities/wechat.ilink-session/login-ready/${toolCallId}`,
     summary,
     planStepId: 'confirm-login',
+    metadata: qrReady ? {
+      qrCodeId: asText(qrSession.qrCodeId),
+      qrStatus: asText(qrSession.status),
+    } : {},
   })
   appendCurrentMissionReviewCheck({
     key: `wechat-ilink-login-authorized-${asText(mission.id, 'mission')}`,
@@ -1200,6 +1226,326 @@ function completeWechatIlinkLoginAfterApproval(mission = {}, permission = {}, op
     nextStep: qrReady
       ? '已生成微信登录二维码。请扫码；扫码确认后，我会再单独确认是否保存凭据。'
       : '已获得微信扫码登录授权。下一步接入真实二维码生成后，我会展示二维码让你扫码；登录成功后再单独确认保存凭据。',
+  })
+}
+
+function latestWechatIlinkQrArtifact(mission = {}) {
+  const artifacts = normalizeArray(mission.artifacts)
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    if (artifacts[index]?.kind === 'credential-login-qr') return artifacts[index]
+  }
+  return null
+}
+
+function latestWechatIlinkQrCodeId(mission = {}) {
+  const artifact = latestWechatIlinkQrArtifact(mission)
+  return asText(artifact?.metadata?.qrCodeId || artifact?.qrCodeId)
+}
+
+function hasWechatIlinkQrArtifact(mission = {}) {
+  return Boolean(latestWechatIlinkQrArtifact(mission))
+}
+
+function wechatIlinkQrPollStageStatus(status = {}) {
+  const state = asText(status.status)
+  if (status.credentialsReady || state === 'confirmed') return 'ok'
+  if (['blocked', 'failed', 'expired'].includes(state)) return state === 'expired' ? 'blocked' : state
+  return 'waiting'
+}
+
+function wechatIlinkQrPollSummary(status = {}) {
+  const state = asText(status.status, 'unknown')
+  if (status.credentialsReady) {
+    return '微信扫码已确认；登录凭据只在本次运行内存里等待保存确认，尚未写入本地文件。'
+  }
+  if (state === 'scaned') return '微信二维码已被扫描，正在等待微信侧确认；当前未保存凭据、未发送消息。'
+  if (state === 'wait') return '微信二维码还在等待扫码；当前未保存凭据、未发送消息。'
+  if (state === 'waiting-for-network-enable') return '真实扫码状态轮询未启用；当前未联网轮询、未保存凭据、未发送消息。'
+  if (['blocked', 'failed', 'expired'].includes(state)) return asText(status.reason, `微信扫码状态为 ${state}；当前未保存凭据、未发送消息。`)
+  return `微信扫码状态：${state}；当前未保存凭据、未发送消息。`
+}
+
+function wechatIlinkQrPollNextStep(status = {}) {
+  const state = asText(status.status)
+  if (status.credentialsReady) return '微信扫码已确认。要保存这次登录凭据，让 Vela 后续能继续处理微信任务吗？'
+  if (state === 'scaned') return '我看到了扫码动作，正在等微信确认。确认后输入“继续”，我再检查一次。'
+  if (state === 'wait') return '二维码还没完成扫码。请扫码后输入“继续”，我再去看状态。'
+  if (state === 'waiting-for-network-enable') return '扫码状态轮询还在安全模拟模式；启用真实登录后，我会检查扫码状态。'
+  if (state === 'expired') return '这个二维码可能已过期，需要重新生成二维码。'
+  if (['blocked', 'failed'].includes(state)) return `扫码状态检查受阻：${asText(status.reason, state)}`
+  return '扫码状态还没确认。完成扫码后输入“继续”，我会再查一次。'
+}
+
+function makeWechatIlinkPollOptions(input = {}, qrCodeId = '') {
+  const adapterDeps = input.wechatIlinkLoginDeps || input.wechatIlink || {}
+  const env = adapterDeps.env || input.env || (typeof process === 'undefined' ? {} : process.env)
+  const options = {
+    ...adapterDeps,
+    env,
+    qrCodeId,
+  }
+  if (Object.prototype.hasOwnProperty.call(adapterDeps, 'allowNetwork')) {
+    options.allowNetwork = adapterDeps.allowNetwork
+  } else if (Object.prototype.hasOwnProperty.call(input, 'allowNetwork')) {
+    options.allowNetwork = input.allowNetwork
+  }
+  return options
+}
+
+async function continueWechatIlinkLoginAfterQrStatus(current = {}, input = {}) {
+  const qrArtifact = latestWechatIlinkQrArtifact(current)
+  if (!qrArtifact) return null
+
+  const qrCodeId = latestWechatIlinkQrCodeId(current)
+  appendCurrentMissionInput({ text: input.text || input.command || input.content, source: input.source || 'typed', screenContext: input.screenContext })
+  const pollOptions = makeWechatIlinkPollOptions(input, qrCodeId)
+  const qrStatus = await pollWechatIlinkQrLoginStatus(pollOptions)
+  const toolCallId = makeId('tool-wechat-ilink-qr-status')
+  const artifactId = makeId('artifact-wechat-ilink-qr-status')
+  const summary = wechatIlinkQrPollSummary(qrStatus)
+  const stageStatus = wechatIlinkQrPollStageStatus(qrStatus)
+
+  appendCurrentMissionAgentAction({
+    role: 'Operator',
+    title: '检查微信扫码状态',
+    status: qrStatus.credentialsReady ? 'credentials_ready' : stageStatus,
+    planStepId: 'save-credentials',
+    summary,
+    result: qrStatus.credentialsReady ? '等待保存确认' : asText(qrStatus.status, 'waiting'),
+    requiresReview: false,
+  })
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'wechat-ilink.qr-login.poll',
+    role: 'Operator',
+    status: stageStatus,
+    planStepId: 'save-credentials',
+    risk: 'Credential',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.qr-login',
+    toolCallId,
+    role: 'Operator',
+    status: stageStatus,
+    stage: 'wechat-ilink-qr-login-status',
+    url: qrCodeId ? 'credential://wechat-ilink/qr-login/status' : 'credential://wechat-ilink/qr-login/missing-id',
+    planStepId: 'save-credentials',
+    summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.credential-save',
+    toolCallId,
+    role: 'Operator',
+    status: qrStatus.credentialsReady ? 'pending' : 'skipped',
+    stage: qrStatus.credentialsReady ? 'wechat-ilink-save-needs-confirmation' : 'wechat-ilink-save-not-ready',
+    url: 'credential://wechat-ilink/save-after-confirmation',
+    planStepId: 'save-credentials',
+    summary: qrStatus.credentialsReady
+      ? '扫码确认后仍未保存 token/accountId；正在等待用户单独确认保存。'
+      : '扫码尚未确认；未保存 token/accountId。',
+  })
+  appendCurrentMissionArtifact({
+    id: artifactId,
+    title: qrStatus.credentialsReady ? '微信扫码已确认' : '微信扫码状态',
+    kind: qrStatus.credentialsReady ? 'credential-login-status' : 'credential-login-poll',
+    uri: `vela://capabilities/wechat.ilink-session/qr-status/${toolCallId}`,
+    summary,
+    planStepId: 'save-credentials',
+    metadata: {
+      qrCodeId: qrCodeId || 'missing',
+      qrStatus: asText(qrStatus.status, 'unknown'),
+      credentialsReady: Boolean(qrStatus.credentialsReady),
+    },
+  })
+  appendCurrentMissionReviewCheck({
+    key: `wechat-ilink-qr-status-${asText(current.id, 'mission')}-${asText(qrStatus.status, 'unknown')}`,
+    title: '微信扫码状态复核',
+    outcome: ['blocked', 'failed', 'expired'].includes(asText(qrStatus.status)) ? 'blocked' : 'passed',
+    reviewer: 'Vela Credential Reviewer',
+    planStepId: 'save-credentials',
+    artifactId,
+    toolCallId,
+    summary: '扫码状态检查只读取登录状态；没有保存凭据、没有读取微信消息、没有发送微信消息。',
+    evidence: [
+      `二维码产物：${qrArtifact.id}`,
+      ...wechatIlinkQrStatusEvidence(qrStatus),
+      '未读取微信消息。',
+      '未发送微信消息。',
+    ],
+  })
+
+  if (!qrStatus.credentialsReady) {
+    return updateCurrentMission({
+      state: 'Running',
+      nextStep: wechatIlinkQrPollNextStep(qrStatus),
+    })
+  }
+
+  const permissionId = makeId('permission-wechat-ilink-save')
+  const redacted = qrStatus.redactedCredentials || {}
+  WECHAT_ILINK_PENDING_CREDENTIALS.set(permissionId, {
+    credentials: qrStatus.credentials,
+    filePath: asText(pollOptions.filePath || qrStatus.credentialStorePath),
+  })
+  return appendCurrentMissionPermission({
+    id: permissionId,
+    action: '保存微信 iLink 登录凭据',
+    risk: 'Credential',
+    decision: 'requested',
+    summary: `微信扫码已确认。是否保存登录凭据？token=${asText(redacted.token, 'present')}；account=${asText(redacted.accountId, 'present')}。`,
+    reason: '保存凭据后，Vela 才能在后续微信任务中复用 iLink 会话；这一步需要单独确认。',
+    requestedBy: 'Vela Operator',
+    planStepId: 'save-credentials',
+    toolCallId: 'wechat-ilink.credential-save',
+    scope: 'credential://wechat-ilink/save',
+    screenContext: input.screenContext,
+  })
+}
+
+function isWechatIlinkCredentialSavePermission(permission = {}) {
+  return asText(permission.risk).toLowerCase() === 'credential'
+    && asText(permission.toolCallId) === 'wechat-ilink.credential-save'
+    && asText(permission.planStepId) === 'save-credentials'
+}
+
+function hasWechatIlinkCredentialSaveResult(mission = {}) {
+  return normalizeArray(mission.toolCalls).some(tool => tool?.toolName === 'wechat-ilink.credential-save' && tool?.status === 'ok')
+    || normalizeArray(mission.artifacts).some(artifact => artifact?.kind === 'credential-save-receipt')
+}
+
+function advanceWechatIlinkLoginPlanAfterCredentialSave(plan = []) {
+  return normalizePlan(plan).map(step => {
+    if (['understand-request', 'prepare-login', 'confirm-login', 'save-credentials'].includes(step.id)) {
+      return { ...step, status: 'Done' }
+    }
+    return step.status === 'Active' ? { ...step, status: 'Done' } : step
+  })
+}
+
+function completeWechatIlinkCredentialSaveAfterApproval(mission = {}, permission = {}) {
+  if (!isWechatIlinkCredentialSavePermission(permission) || !isWechatIlinkLoginMission(mission)) return mission
+  if (hasWechatIlinkCredentialSaveResult(mission)) return mission
+
+  const pending = WECHAT_ILINK_PENDING_CREDENTIALS.get(permission.id)
+  const toolCallId = makeId('tool-wechat-ilink-credential-save')
+  if (!pending?.credentials?.token || !pending?.credentials?.accountId) {
+    appendCurrentMissionToolCall({
+      id: toolCallId,
+      toolName: 'wechat-ilink.credential-save',
+      role: 'Operator',
+      status: 'blocked',
+      planStepId: 'save-credentials',
+      risk: 'Credential',
+      result: '登录凭据只保存在运行内存里；当前找不到待保存凭据，需要重新扫码确认。',
+    })
+    appendCurrentMissionReviewCheck({
+      key: `wechat-ilink-credential-save-missing-${asText(mission.id, 'mission')}`,
+      title: '微信凭据保存复核',
+      outcome: 'blocked',
+      reviewer: 'Vela Credential Reviewer',
+      planStepId: 'save-credentials',
+      toolCallId,
+      summary: '用户批准了保存，但运行内存里没有待保存凭据；没有写入空凭据。',
+      evidence: [
+        `批准记录：${permission.id}`,
+        '未保存 token/accountId。',
+        '未读取微信消息。',
+        '未发送微信消息。',
+      ],
+    })
+    return updateCurrentMission({
+      state: canTransitionMission(mission.state, 'Blocked') ? 'Blocked' : mission.state,
+      nextStep: '保存凭据受阻：需要重新生成二维码并完成扫码确认。',
+    })
+  }
+
+  const saved = saveWechatIlinkCredentials(pending.credentials, {
+    filePath: pending.filePath,
+    source: 'qr-login',
+  })
+  WECHAT_ILINK_PENDING_CREDENTIALS.delete(permission.id)
+  const summary = `微信 iLink 登录凭据已保存到 Vela 用户数据目录；token=${asText(saved.credentials.token, 'saved')}；account=${asText(saved.credentials.accountId, 'saved')}。`
+  appendCurrentMissionAgentAction({
+    role: 'Operator',
+    title: '保存微信登录凭据',
+    status: 'saved',
+    planStepId: 'save-credentials',
+    summary,
+    result: '已保存',
+    requiresReview: false,
+  })
+  appendCurrentMissionToolCall({
+    id: toolCallId,
+    toolName: 'wechat-ilink.credential-save',
+    role: 'Operator',
+    status: 'ok',
+    planStepId: 'save-credentials',
+    risk: 'Credential',
+    result: summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.credential-store',
+    toolCallId,
+    role: 'Operator',
+    status: 'ok',
+    stage: 'wechat-ilink-credential-saved',
+    url: 'credential://wechat-ilink/store',
+    planStepId: 'save-credentials',
+    summary,
+  })
+  appendCurrentMissionToolStage({
+    toolName: 'wechat-ilink.messages',
+    toolCallId,
+    role: 'Operator',
+    status: 'skipped',
+    stage: 'wechat-ilink-no-message-read-or-send',
+    url: 'external://wechat/messages/not-called',
+    planStepId: 'save-credentials',
+    summary: '本次只保存登录凭据，没有读取或发送微信消息。',
+  })
+  appendCurrentMissionArtifact({
+    title: '微信登录凭据已保存',
+    kind: 'credential-save-receipt',
+    uri: `credential://wechat-ilink/store/${toolCallId}`,
+    summary,
+    planStepId: 'save-credentials',
+    metadata: {
+      saved: true,
+      source: 'qr-login',
+    },
+  })
+  appendCurrentMissionReviewCheck({
+    key: `wechat-ilink-credential-save-${asText(mission.id, 'mission')}`,
+    title: '微信凭据保存复核',
+    outcome: 'passed',
+    reviewer: 'Vela Credential Reviewer',
+    planStepId: 'save-credentials',
+    artifactId: getCurrentMission().artifacts.at(-1)?.id,
+    toolCallId,
+    summary: '微信登录凭据只在用户批准保存后写入本地凭据文件；没有读取或发送微信消息。',
+    evidence: [
+      `批准记录：${permission.id}`,
+      `凭据文件：${saved.filePath}`,
+      '保存发生在 Credential 权限批准之后。',
+      '未读取微信消息。',
+      '未发送微信消息。',
+    ],
+  })
+  setCurrentMissionReview({
+    outcome: 'passed',
+    reviewer: 'Vela Credential Reviewer',
+    summary: '微信连接链路已通过：先生成二维码，扫码确认后再单独确认保存凭据。',
+    evidence: [
+      `Permission ${permission.id} approved.`,
+      `Tool ${toolCallId} recorded after approval.`,
+    ],
+  })
+  const reviewedMission = getCurrentMission()
+  return updateCurrentMission({
+    state: 'Complete',
+    plan: advanceWechatIlinkLoginPlanAfterCredentialSave(reviewedMission.plan),
+    nextStep: '微信已经连接好。接下来你可以直接让 Vela 帮你处理微信任务；真正发送消息前仍会先问你。',
   })
 }
 
@@ -2142,6 +2488,9 @@ function resolveCurrentMissionPermissionWithOptions(options = {}, runtimeOptions
       qrSession: runtimeOptions.wechatIlinkQrSession || null,
     })
   }
+  if (approved && !stillPending && isWechatIlinkCredentialSavePermission(resolvedPermission)) {
+    return completeWechatIlinkCredentialSaveAfterApproval(written, resolvedPermission)
+  }
   return written
 }
 
@@ -2280,6 +2629,25 @@ export function applyCurrentMissionCommand(input = {}) {
     }
   }
 
+  if (isContinue) {
+    const pendingMission = getCurrentMission()
+    const permissions = normalizeArray(pendingMission.permissions)
+    let pendingPermission = null
+    for (let index = permissions.length - 1; index >= 0; index -= 1) {
+      if (isPendingPermissionDecision(permissions[index].decision)) {
+        pendingPermission = permissions[index]
+        break
+      }
+    }
+    if (pendingMission.state === 'Waiting for permission' && pendingPermission) {
+      appendCurrentMissionInput({ text, source: input.source || 'typed', screenContext: input.screenContext })
+      return updateCurrentMission({
+        state: 'Waiting for permission',
+        nextStep: `需要先确认：${pendingPermission.action}`,
+      })
+    }
+  }
+
   if (explicitStart || (!isContinue && !isComplete && !isReviewPass && !isPermission && !isRecovery && !isStop && !isRepair)) {
     const now = new Date().toISOString()
     const missionText = asText(explicitStart?.[2], text)
@@ -2407,7 +2775,15 @@ export async function applyCurrentMissionCommandWithAdapters(input = {}) {
   }
 
   let capabilityAdapterResult = input.capabilityAdapterResult || null
-  if (!capabilityAdapterResult && COMMAND_CONTINUE_RE.test(text)) {
+  const isContinue = COMMAND_CONTINUE_RE.test(text)
+  if (!capabilityAdapterResult && (isContinue || WECHAT_QR_SCAN_STATUS_RE.test(text))) {
+    const current = getCurrentMission()
+    if (current.state === 'Running' && isWechatIlinkLoginMission(current) && hasWechatIlinkQrArtifact(current)) {
+      const loginStatusResult = await continueWechatIlinkLoginAfterQrStatus(current, input)
+      if (loginStatusResult) return loginStatusResult
+    }
+  }
+  if (!capabilityAdapterResult && isContinue) {
     const current = getCurrentMission()
     if (current.state === 'Running') {
       capabilityAdapterResult = await prepareCapabilityAdapterResult(current, input, input.capabilityAdapterDeps || {})
