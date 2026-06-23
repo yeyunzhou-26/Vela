@@ -232,6 +232,9 @@ function missionAttention(mission = {}) {
     return {
       kind: 'recovery',
       panelId: recoveryAction.source === 'review_blocked' ? 'review' : 'guard',
+      primaryAction: 'submit-command',
+      primaryCommand: '继续',
+      primaryLabel: 'Retry now',
       secondaryAction: 'open-spine-panel',
       secondaryLabel: recoveryAction.source === 'review_blocked' ? 'Open Review' : 'Open Guard',
       caption: 'Recovery needed',
@@ -592,6 +595,8 @@ export function renderMissionWorkspace(mission, { notice = '', workspaceMode = '
       Promise.resolve(onApprovePermission?.(attention.permission)).catch(() => {})
     } else if (attention?.primaryAction === 'resolve-review-check') {
       Promise.resolve(onResolveReviewCheck?.(attention.check)).catch(() => {})
+    } else if (attention?.primaryAction === 'submit-command') {
+      Promise.resolve(onSubmitCommand?.(attention.primaryCommand || '继续')).catch(() => {})
     }
   })
   workspace.querySelector('[data-attention-action="secondary"]')?.addEventListener('click', () => {

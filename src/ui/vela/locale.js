@@ -165,6 +165,7 @@ const ZH = {
   'Open Review': '打开审查',
   'Recovery needed': '需要恢复',
   'Recovery action pending': '待处理恢复动作',
+  'Retry now': '我处理好了，重试',
   'Open the spine to inspect recovery evidence.': '打开右侧脊柱查看恢复证据。',
   'Mission command input': '任务命令输入',
   'Start a mission or ask Vela to continue': '开始任务，或让 Vela 继续',
