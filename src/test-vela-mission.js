@@ -2343,6 +2343,27 @@ try {
     text: '帮打开微信，给我老婆回个信息',
     source: 'test-command',
   })
+  const missingWechatContextDraft = await runtime.applyCurrentMissionCommandWithAdapters({
+    text: '继续',
+    source: 'test-command',
+    wechatIlinkReadDeps: {
+      allowRead: true,
+      filePath: path.join(tmp, 'missing-wechat-context-creds.json'),
+      env: {},
+    },
+  })
+  assert(missingWechatContextDraft.state === 'Blocked', 'external message missing WeChat context blocks before drafting send')
+  assert(missingWechatContextDraft.nextStep.includes('缺少微信 iLink token/accountId'), 'external message missing WeChat context explains missing credentials')
+  assert(missingWechatContextDraft.plan.find(item => item.id === 'inspect-context')?.status === 'Blocked', 'external message missing WeChat context blocks inspect step')
+  assert(missingWechatContextDraft.recoveryActions.some(item => item.title.includes('连接微信 iLink')), 'external message missing WeChat context opens connection recovery action')
+  assert(missingWechatContextDraft.reviewChecks.some(item => item.title === '桌面上下文复核' && item.outcome === 'blocked'), 'external message missing WeChat context records blocked review')
+  assert(!missingWechatContextDraft.permissions.some(item => item.risk === 'External message' && runtime.isPendingPermissionDecision(item.decision)), 'external message missing WeChat context does not request send approval')
+  assert(!missingWechatContextDraft.toolCalls.some(item => item.toolName === 'messages.outbound.send'), 'external message missing WeChat context does not send')
+
+  runtime.applyCurrentMissionCommand({
+    text: '帮打开微信，给我老婆回个信息',
+    source: 'test-command',
+  })
   runtime.applyCurrentMissionCommand({ text: '继续', source: 'test-command' })
   let liveExternalWechatSendOpts = null
   let liveExternalWechatSendCall = null

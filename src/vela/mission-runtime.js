@@ -1963,9 +1963,10 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
   const contextBlocked = contextResult?.adapterId === 'wechat-ilink'
     && ['blocked', 'failed'].includes(asText(contextResult.status))
   if (contextBlocked) {
+    const blockReason = asText(contextResult.reason, '请先连接微信或检查 iLink 配置。')
     updateCurrentMission({
       state: 'Running',
-      nextStep: `读取${payload.channel}上下文受阻：${asText(contextResult.reason, '请检查连接配置后重试。')}`,
+      nextStep: `读取${payload.channel}上下文受阻：${blockReason}`,
       plan: externalMessagePlanAfterContextBlocked(current.plan),
       agentActions: [
         ...normalizeArray(current.agentActions),
@@ -1974,16 +1975,20 @@ function advanceExternalMessageMissionByCommand(current = {}, input = {}, text =
           title: '查看外部消息上下文',
           status: 'blocked',
           planStepId: 'inspect-context',
-          summary: asText(contextResult.reason, '外部消息上下文读取受阻。'),
+          summary: blockReason,
           result: '上下文受阻',
           requiresReview: true,
         }, { createdAt }),
       ],
     })
     appendExternalMessageDesktopContext(current, { contextResult })
+    appendCurrentMissionRecoveryAction({
+      title: '连接微信 iLink 后重试读取上下文',
+      summary: `${blockReason} 完成微信连接或修正 iLink 配置后，再输入“继续”让 Vela 重新查看上下文。`,
+    })
     return updateCurrentMission({
       state: 'Blocked',
-      nextStep: `读取${payload.channel}上下文受阻：${asText(contextResult.reason, '请先连接微信或检查 iLink 配置。')}`,
+      nextStep: `读取${payload.channel}上下文受阻：${blockReason}`,
     })
   }
   const nextStep = `${summary} 这样发可以吗？`
